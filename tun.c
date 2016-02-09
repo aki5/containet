@@ -23,16 +23,15 @@
 #include "tun.h"
 
 int
-tunopen(char *gotdev, char *wantdev, char *addr)
+ifconfig(char *devname, char *addr)
 {
 	char *p, addrbuf[32];
 	struct sockaddr_in *addrp;
 	struct ifreq ifr;
-	int tunfd, cfgfd;
+	int cfgfd;
 	int maskbits;
 
 	maskbits = -1;
-	tunfd = -1;
 	cfgfd = -1;
 	memset(&ifr, 0, sizeof ifr);
 
@@ -44,25 +43,12 @@ tunopen(char *gotdev, char *wantdev, char *addr)
 
 	}
 
-	ifr.ifr_flags = IFF_TAP;
-	//ifr.ifr_flags = IFF_TUN;
-	//ifr.ifr_flags = IFF_NO_PI;
-	if(wantdev != NULL)
-		strncpy(ifr.ifr_name, wantdev, IFNAMSIZ);
-
-	if((tunfd = open("/dev/net/tun", O_RDWR)) == -1){
-		fprintf(stderr, "open %s: %s\n", ifr.ifr_name, strerror(errno));
-		goto error_out;
-	}
-	if(ioctl(tunfd, TUNSETIFF, (void *)&ifr) == -1){
-		fprintf(stderr, "ioctl TUNSETIFF %s: %s\n", ifr.ifr_name, strerror(errno));
-		goto error_out;
-	}
-
 	if((cfgfd = socket(PF_INET, SOCK_DGRAM, IPPROTO_IP)) == -1){
 		fprintf(stderr, "socket SOCK_DGRAM: %s\n", strerror(errno));
 		goto error_out;
 	}
+
+	strncpy(ifr.ifr_name, devname, sizeof ifr.ifr_name-1);
 
 	ifr.ifr_addr.sa_family = AF_INET;
 	addrp = (struct sockaddr_in *)&ifr.ifr_addr;
@@ -91,15 +77,50 @@ tunopen(char *gotdev, char *wantdev, char *addr)
 		goto error_out;
 	}
 
+	close(cfgfd);
+
+	return 0;
+
+
+error_out:
+	if(cfgfd != -1)
+		close(cfgfd);
+	return -1;
+}
+
+int
+tunopen(char *gotdev, char *wantdev, char *addr)
+{
+	struct ifreq ifr;
+	int tunfd;
+
+	tunfd = -1;
+	memset(&ifr, 0, sizeof ifr);
+
+	ifr.ifr_flags = IFF_TAP;
+	//ifr.ifr_flags = IFF_TUN;
+	//ifr.ifr_flags = IFF_NO_PI;
+	if(wantdev != NULL)
+		strncpy(ifr.ifr_name, wantdev, IFNAMSIZ);
+
+	if((tunfd = open("/dev/net/tun", O_RDWR)) == -1){
+		fprintf(stderr, "open %s: %s\n", ifr.ifr_name, strerror(errno));
+		goto error_out;
+	}
+	if(ioctl(tunfd, TUNSETIFF, (void *)&ifr) == -1){
+		fprintf(stderr, "ioctl TUNSETIFF %s: %s\n", ifr.ifr_name, strerror(errno));
+		goto error_out;
+	}
+
+	ifconfig(ifr.ifr_name, addr);
+
 	if(gotdev != NULL)
 		strcpy(gotdev, ifr.ifr_name);
-	close(cfgfd);
+
 	return tunfd;
 
 error_out:
 	if(tunfd != -1)
 		close(tunfd);
-	if(cfgfd != -1)
-		close(cfgfd);
 	return -1;
 }

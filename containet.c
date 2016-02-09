@@ -103,6 +103,7 @@ enterchild(void *arg){
 	char ifname[256];
 	int i, fd;
 
+	ifconfig("lo", "127.0.0.1/8");
 	if(ap->dsock != -1){
 		if((fd = tunopen(ifname, "eth0", ap->ip4addr)) == -1)
 			exit(1);

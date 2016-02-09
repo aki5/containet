@@ -20,3 +20,4 @@
  *	THE SOFTWARE.
  */
 int tunopen(char *gotdev, char *wantdev, char *addr);
+int ifconfig(char *devname, char *addr);
