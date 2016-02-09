@@ -12,7 +12,7 @@ Currently, containet consists of two programs, containet and swtch.
 Containet has the following command line options
 
 ```
--s path/to/switch.sock
+-s path/to/containet-swtch.sock
 	domain socket to post our tun/tap interface file descriptor into, for
 	packet forwarding between containers.
 -4 ip4addr/mask
@@ -30,7 +30,9 @@ Containet has the following command line options
 
 All the fs paramters (-r, -t, -w) can be omitted, in which case no changes
 are made to the mount name space. If no path to the switch is supplied, no
-network interface will be created for the container.
+network interface will be created for the container. The -4 switch can also
+be omitted, in which case no address will be assigned up front (but code in
+the container can still assign any address it wants).
 
 ## Swtch
 
@@ -38,7 +40,7 @@ Swtch does ethernet switching between multiple containers. Swtch has the
 following command line options
 
 ```
--s path/to/switch.sock
+-s path/to/containet-swtch.sock
 	Where to listen for incoming calls from containet, to inject new
 	containers into the forwarder
 ```
@@ -48,19 +50,6 @@ following command line options
 First build the programs
 ```
 make
-```
-
-You should see the following output
-
-```
-cc -O2 -W -Wall   -c -o containet.o containet.c
-cc -O2 -W -Wall   -c -o tun.o tun.c
-cc -O2 -W -Wall   -c -o file.o file.c
-cc -O2 -W -Wall   -c -o strsplit.o strsplit.c
-cc -O2 -W -Wall   -c -o unsocket.o unsocket.c
-cc -o containet containet.o tun.o file.o strsplit.o unsocket.o
-cc -O2 -W -Wall   -c -o swtch.o swtch.c
-cc -o swtch swtch.o unsocket.o -lpthread
 ```
 
 Now remove any old switch socket and start the switch.
@@ -73,7 +62,7 @@ sudo ./swtch -s /tmp/containet-swtch.sock
 Open up another terminal, and write
 
 ```
-$ sudo ./containet -4 10.0.0.2/24 -s /tmp/swtch.sock /bin/sh
+$ sudo ./containet -4 10.0.0.2/24 -s /tmp/containet-swtch.sock /bin/sh
 # ifconfig
 eth0      Link encap:Ethernet  HWaddr 92:35:d0:4c:78:10  
           inet addr:10.0.0.2  Bcast:10.0.0.255  Mask:255.255.255.0
@@ -88,7 +77,7 @@ eth0      Link encap:Ethernet  HWaddr 92:35:d0:4c:78:10
 In yet another terminal, write 
 
 ```
-$ sudo ./containet -4 10.0.0.1/24 -s /tmp/swtch.sock /bin/sh
+$ sudo ./containet -4 10.0.0.1/24 -s /tmp/containet-swtch.sock /bin/sh
 # ifconfig
 eth0      Link encap:Ethernet  HWaddr 02:d7:47:8e:18:29  
           inet addr:10.0.0.1  Bcast:10.0.0.255  Mask:255.255.255.0

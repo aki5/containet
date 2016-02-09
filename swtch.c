@@ -63,7 +63,7 @@ acceptor(void *dsockp)
 
 	for(;;){
 		if((fd = accept(dsock, NULL, NULL)) == -1){
-			perror("accept error");
+			fprintf(stderr, "accept: %s\n", strerror(errno));
 			continue;
 		}
 		nrd = recvfd(fd, &newfd, buf, sizeof buf);
