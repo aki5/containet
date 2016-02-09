@@ -23,6 +23,7 @@
 #include "tun.h"
 #include "file.h"
 #include "strsplit.h"
+#include "unsocket.h"
 
 #include <sys/syscall.h> /* For SYS_xxx definitions, pivot_root.. */
 
@@ -34,6 +35,7 @@ struct Args {
 	char *toproot;
 	char *topwork;
 	char *ip4addr;
+	int dsock; // domain socket to switch
 };
 
 static struct {
@@ -99,31 +101,14 @@ static int
 enterchild(void *arg){
 	Args *ap = (Args *)arg;
 	char ifname[256];
-	int i, nrd, fd;
+	int i, fd;
 
-	if(ap->ip4addr != NULL){
+	if(ap->dsock != -1){
 		if((fd = tunopen(ifname, "eth0", ap->ip4addr)) == -1)
 			exit(1);
-		switch(fork()){
-		case -1:
-			fprintf(stderr, "fork: %s\n",strerror(errno));
-			exit(1);
-		case 0:
-			while((nrd = read(fd, buf, sizeof buf)) > 0){
-				printf("pkt:\t");
-				for(i = 0; i < nrd; i++){
-					printf("%02x", (uint8_t)buf[i]);
-					if((i&15)==15)
-						printf("\n\t");
-					else
-						printf(" ");
-				}
-				printf("\n");
-			}
-			exit(0);
-		default:
-			close(fd);
-		}
+		if(sendfd(ap->dsock, fd, "hello", 5) == -1)
+			fprintf(stderr, "sendfd fail\n");
+		close(ap->dsock);
 	}
 
 	/*
@@ -212,20 +197,32 @@ enterchild(void *arg){
 }
 
 int
-main(int argc, char *argv[]) {
+main(int argc, char *argv[])
+{
 	Args args;
 	char *root;
 	char *toproot;
 	char *topwork;
 	char *ip4addr;
+	char *swtchname;
 	int opt, pid, status;
+	int dsock;
 
 	root = NULL;
 	toproot = NULL;
 	topwork = NULL;
 	ip4addr = NULL;
-	while((opt = getopt(argc, argv, "r:t:w:4:")) != -1) {
+	swtchname = NULL;
+	dsock = -1;
+	while((opt = getopt(argc, argv, "r:t:w:4:s:")) != -1) {
 		switch(opt){
+		case 's':
+			swtchname = optarg;
+			if((dsock = unsocket(SOCK_STREAM, NULL, swtchname)) == -1){
+				fprintf(stderr, "could not connect to switch %s\n", swtchname);
+				exit(1);
+			}
+			break;
 		case '4':
 			ip4addr = optarg;
 			break;
@@ -239,7 +236,7 @@ main(int argc, char *argv[]) {
 			topwork = optarg;
 			break;
 		default:
-			fprintf(stderr, "usage: %s -r path/to/root\n", argv[0]);
+			fprintf(stderr, "usage: %s [-r path/to/root] [-t path/to/top-dir] [-w path/to/work-dir] [-4 ip4 address] [-s path/to/switch-sock]\n", argv[0]);
 			exit(1);
 		}
 	}
@@ -248,7 +245,7 @@ main(int argc, char *argv[]) {
 	// having iptables around at all is a major time suck too, but we can't fix that here.
 	writefile("/sys/kernel/rcu_expedited", "1", 1);
 
-	args = (Args){argc-optind, argv+optind, root, toproot, topwork, ip4addr};
+	args = (Args){argc-optind, argv+optind, root, toproot, topwork, ip4addr, dsock};
 
 	pid = clone(
 		enterchild, stackalign(childstack + sizeof childstack),
