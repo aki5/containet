@@ -34,6 +34,29 @@ network interface will be created for the container. The -4 switch can also
 be omitted, in which case no address will be assigned up front (but code in
 the container can still assign any address it wants).
 
+Regardless of the mount name space configuration, containet will mount the
+following file systems before executing the program
+
+```
+	/proc
+	/dev
+	/dev/pts
+```
+
+It will also create the following device files
+
+```
+	/dev/console
+	/dev/null
+	/dev/zero
+	/dev/ptmx
+	/dev/tty
+	/dev/random
+	/dev/urandom
+```
+
+Which should be enough for everybody.
+
 ## Swtch
 
 Swtch does ethernet switching between multiple containers. Swtch has the
