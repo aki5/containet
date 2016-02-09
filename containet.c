@@ -1,23 +1,23 @@
 /*
- *      Copyright (c) 2016 Aki Nyrhinen
+ *	Copyright (c) 2016 Aki Nyrhinen
  *
- *      Permission is hereby granted, free of charge, to any person obtaining a copy
- *      of this software and associated documentation files (the "Software"), to deal
- *      in the Software without restriction, including without limitation the rights
- *      to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- *      copies of the Software, and to permit persons to whom the Software is
- *      furnished to do so, subject to the following conditions:
+ *	Permission is hereby granted, free of charge, to any person obtaining a copy
+ *	of this software and associated documentation files (the "Software"), to deal
+ *	in the Software without restriction, including without limitation the rights
+ *	to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ *	copies of the Software, and to permit persons to whom the Software is
+ *	furnished to do so, subject to the following conditions:
  *
- *      The above copyright notice and this permission notice shall be included in
- *      all copies or substantial portions of the Software.
+ *	The above copyright notice and this permission notice shall be included in
+ *	all copies or substantial portions of the Software.
  *
- *      THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- *      IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- *      FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
- *      AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- *      LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- *      OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- *      THE SOFTWARE.
+ *	THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ *	IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ *	FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+ *	AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ *	LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ *	OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ *	THE SOFTWARE.
  */
 #include "os.h"
 #include "tun.h"
@@ -33,6 +33,7 @@ struct Args {
 	char *root;
 	char *toproot;
 	char *topwork;
+	char *ip4addr;
 };
 
 static struct {
@@ -100,27 +101,29 @@ enterchild(void *arg){
 	char ifname[256];
 	int i, nrd, fd;
 
-	if((fd = tunopen(ifname, "eth0", "10.0.0.1/24")) == -1)
-		exit(1);
-	switch(fork()){
-	case -1:
-		fprintf(stderr, "fork: %s\n",strerror(errno));
-		exit(1);
-	case 0:
-		while((nrd = read(fd, buf, sizeof buf)) > 0){
-			printf("pkt:\t");
-			for(i = 0; i < nrd; i++){
-				printf("%02x", (uint8_t)buf[i]);
-				if((i&15)==15)
-					printf("\n\t");
-				else
-					printf(" ");
+	if(ap->ip4addr != NULL){
+		if((fd = tunopen(ifname, "eth0", ap->ip4addr)) == -1)
+			exit(1);
+		switch(fork()){
+		case -1:
+			fprintf(stderr, "fork: %s\n",strerror(errno));
+			exit(1);
+		case 0:
+			while((nrd = read(fd, buf, sizeof buf)) > 0){
+				printf("pkt:\t");
+				for(i = 0; i < nrd; i++){
+					printf("%02x", (uint8_t)buf[i]);
+					if((i&15)==15)
+						printf("\n\t");
+					else
+						printf(" ");
+				}
+				printf("\n");
 			}
-			printf("\n");
+			exit(0);
+		default:
+			close(fd);
 		}
-		exit(0);
-	default:
-		close(fd);
 	}
 
 	/*
@@ -214,13 +217,18 @@ main(int argc, char *argv[]) {
 	char *root;
 	char *toproot;
 	char *topwork;
+	char *ip4addr;
 	int opt, pid, status;
 
 	root = NULL;
 	toproot = NULL;
 	topwork = NULL;
-	while((opt = getopt(argc, argv, "r:t:w:")) != -1) {
+	ip4addr = NULL;
+	while((opt = getopt(argc, argv, "r:t:w:4:")) != -1) {
 		switch(opt){
+		case '4':
+			ip4addr = optarg;
+			break;
 		case 'r':
 			root = optarg;
 			break;
@@ -240,7 +248,7 @@ main(int argc, char *argv[]) {
 	// having iptables around at all is a major time suck too, but we can't fix that here.
 	writefile("/sys/kernel/rcu_expedited", "1", 1);
 
-	args = (Args){argc-optind, argv+optind, root, toproot, topwork};
+	args = (Args){argc-optind, argv+optind, root, toproot, topwork, ip4addr};
 
 	pid = clone(
 		enterchild, stackalign(childstack + sizeof childstack),

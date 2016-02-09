@@ -19,28 +19,47 @@
  *	OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  *	THE SOFTWARE.
  */
-#define _GNU_SOURCE
-#include <stdio.h>
-#include <stdlib.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <sys/wait.h>
+#include <string.h>
+#include <sys/socket.h>
 #include <unistd.h>
-#include <sched.h>
+#include <sys/un.h>
+#include <stdlib.h>
+#include <stdio.h>
 #include <errno.h>
 #include <string.h>
-#include <sys/ioctl.h>
-#include <sys/mount.h>
-#include <inttypes.h>
 
-#include <sys/socket.h>
-#include <linux/ioctl.h>
-#include <linux/if_tun.h>
-#include <linux/if.h>
-#include <linux/sockios.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
+int
+unsocket(char *srcpath, char *dstpath)
+{
+	struct sockaddr_un dst;
+	struct sockaddr_un src;
+	int fd;
 
-#define stackalign(x) (void*)((uintptr_t)(x) & ~(uintptr_t)0xf)
-#define nelem(x) (int)(sizeof(x)/sizeof(x[0]))
+	memset(&src, 0, sizeof src);
+	memset(&dst, 0, sizeof dst);
+	if((fd = socket(PF_UNIX, SOCK_DGRAM, 0)) == -1){
+		fprintf(stderr, "unsocket: socket: %s\n", strerror(errno));
+		goto err_out;
+	}
+
+	src.sun_family = AF_UNIX;
+	strncpy(src.sun_path, srcpath, sizeof src.sun_path-1);
+	if(bind(fd, (struct sockaddr*)&src, sizeof src) == -1){
+		fprintf(stderr, "unsocket: bind %s: %s\n", src.sun_path, strerror(errno));
+		goto err_out;
+	}
+
+	dst.sun_family = AF_UNIX;
+	strncpy(dst.sun_path, dstpath, sizeof dst.sun_path-1);
+	if(connect(fd, (struct sockaddr*)&dst, sizeof dst) == -1){
+		fprintf(stderr, "unsocket: connect %s: %s\n", dst.sun_path, strerror(errno));
+		goto err_out;
+	}
+
+	return fd;
+
+err_out:
+	if(fd != -1)
+		close(fd);
+	return -1;
+}
