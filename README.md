@@ -1,9 +1,9 @@
 
 # Containet
 
-This repository is an attempt at creating clean environment for cluster computing,
-in a way that brings compute node creation and network configuration to the programmer
-as very quick turnaround first class operations.
+This repository is an attempt at creating clean environment for cluster
+computing, in a way this is an attempt to make the network addressing not
+only trivially configurable, but completely programmable.
 
 Currently, containet consists of two programs, containet and swtch.
 
@@ -13,27 +13,34 @@ Containet has the following command line options
 
 ```
 -s path/to/switch.sock
-	domain socket to post our tun/tap interface file descriptor into, for packet forwarding between containers.
+	domain socket to post our tun/tap interface file descriptor into, for
+	packet forwarding between containers.
 -4 ip4addr/mask
-	ipv4 address to assing to our tun/tap interface locally. If mask is not supplied, the default is based on class.
+	ipv4 address to assing to our tun/tap interface locally. If mask
+	is not supplied, the default is based on class.
 -r path/to/root
 	path to pivot into before executing the program
 -t path/to/top
-	if supplied, aufs (or overlayfs) is used to mount this directory over the one given with -r.
+	if supplied, aufs (or overlayfs) is used to mount this directory over
+	the one given with -r.
 -w path/to/work
-	if supplied, overlayfs working directory is set to this one (and overlayfs is used, instead of aufs).
+	if supplied, overlayfs working directory is set to this one (and
+	overlayfs is used, instead of aufs).
 ```
 
-All the fs paramters (-r, -t, -w) can be omitted, in which case no changes are made to the mount name space. If no path
-to the switch is supplied, no network interface will be created for the container.
+All the fs paramters (-r, -t, -w) can be omitted, in which case no changes
+are made to the mount name space. If no path to the switch is supplied, no
+network interface will be created for the container.
 
 ## Swtch
 
-Swtch does ethernet switching between multiple containers. Swtch has the following command line options
+Swtch does ethernet switching between multiple containers. Swtch has the
+following command line options
 
 ```
 -s path/to/switch.sock
-	Where to listen for incoming calls from containet, to inject new containers into the forwarder
+	Where to listen for incoming calls from containet, to inject new
+	containers into the forwarder
 ```
 
 ## Demo
@@ -76,8 +83,6 @@ eth0      Link encap:Ethernet  HWaddr 92:35:d0:4c:78:10
           TX packets:3 errors:0 dropped:0 overruns:0 carrier:0
           collisions:0 txqueuelen:500 
           RX bytes:0 (0.0 B)  TX bytes:258 (258.0 B)
-
-# 
 ```
 
 In yet another terminal, write 
@@ -104,5 +109,4 @@ PING 10.0.0.2 (10.0.0.2) 56(84) bytes of data.
 --- 10.0.0.2 ping statistics ---
 4 packets transmitted, 4 received, 0% packet loss, time 2998ms
 rtt min/avg/max/mdev = 0.119/0.145/0.183/0.026 ms
-#
 ```
