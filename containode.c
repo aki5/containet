@@ -110,6 +110,7 @@ enterchild(void *arg){
 		if(sendfd(ap->dsock, fd, "hello", 5) == -1)
 			fprintf(stderr, "sendfd fail\n");
 		close(ap->dsock);
+		close(fd);
 	}
 
 	/*
