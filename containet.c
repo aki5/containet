@@ -171,7 +171,10 @@ enterchild(void *arg){
 				exit(1);
 			}
 		}
-		chdir("/");
+		if(chdir("/") == -1){
+			fprintf(stderr, "could not chdir to /: %s\n", strerror(errno));
+			exit(1);
+		}
 	}
 
 	for(i = 0; i < nelem(mounts); i++){
