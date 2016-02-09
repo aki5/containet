@@ -1,13 +1,13 @@
 
 CFLAGS=-O2 -W -Wall
 
-all: containet swtch
+all: containode containet
 
-containet: containet.o tun.o file.o strsplit.o unsocket.o
-	$(CC) -o containet containet.o tun.o file.o strsplit.o unsocket.o
+containode: containode.o tun.o file.o strsplit.o unsocket.o
+	$(CC) -o containode containode.o tun.o file.o strsplit.o unsocket.o
 
-swtch: swtch.o unsocket.o
-	$(CC) -o swtch swtch.o unsocket.o -lpthread
+containet: containet.o unsocket.o
+	$(CC) -o containet containet.o unsocket.o -lpthread
 
 clean:
-	rm -f containet swtch *.o
+	rm -f containode containet *.o

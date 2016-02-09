@@ -5,14 +5,14 @@ This repository is an attempt at creating clean environment for cluster
 computing, in a way this is an attempt to make the network addressing not
 only trivially configurable, but completely programmable.
 
-Currently, containet consists of two programs, containet and swtch.
+Currently, Containet consists of two programs, containode and containet.
 
-## Containet
+## Containode
 
-Containet has the following command line options
+Containode has the following command line options
 
 ```
--s path/to/containet-swtch.sock
+-s path/to/containet.sock
 	domain socket to post our tun/tap interface file descriptor into, for
 	packet forwarding between containers.
 -4 ip4addr/mask
@@ -28,13 +28,14 @@ Containet has the following command line options
 	overlayfs is used, instead of aufs).
 ```
 
-All the fs paramters (-r, -t, -w) can be omitted, in which case no changes
-are made to the mount name space. If no path to the switch is supplied, no
-network interface will be created for the container. The -4 switch can also
-be omitted, in which case no address will be assigned up front (but code in
-the container can still assign any address it wants).
+All the mount name space paramters (-r, -t, -w) can be omitted, in which case
+no changes are made to the mount name space. If no -s flag is supplied,
+no network interface will be created for the container beyond the loopback
+device. The -4 switch can also be omitted, in which case no address will be
+assigned up front (but code in the container can still assign any address it
+wants).
 
-Regardless of the mount name space configuration, containet will mount the
+Regardless of the mount name space configuration, containode will mount the
 following file systems before executing the program
 
 ```
@@ -55,16 +56,16 @@ It will also create the following device files
 	/dev/urandom
 ```
 
-Which should be enough for everybody.
+Which goes a surprisingly long way.
 
-## Swtch
+## Containet
 
-Swtch does ethernet switching between multiple containers. Swtch has the
+Containet does ethernet switching between multiple containers. Containet has the
 following command line options
 
 ```
--s path/to/containet-swtch.sock
-	Where to listen for incoming calls from containet, to inject new
+-s path/to/containet.sock
+	Where to listen for incoming calls from containode, to inject new
 	containers into the forwarder
 ```
 
@@ -78,14 +79,14 @@ make
 Now remove any old switch socket and start the switch.
 
 ```
-sudo rm /tmp/containet-swtch.sock
-sudo ./swtch -s /tmp/containet-swtch.sock
+sudo rm /tmp/containet.sock
+sudo ./containet -s /tmp/containet.sock
 ```
 
 Open up another terminal, and write
 
 ```
-$ sudo ./containet -4 10.0.0.2/24 -s /tmp/containet-swtch.sock /bin/sh
+$ sudo ./containode -4 10.0.0.2/24 -s /tmp/containet.sock /bin/sh
 # ifconfig
 eth0      Link encap:Ethernet  HWaddr 92:35:d0:4c:78:10  
           inet addr:10.0.0.2  Bcast:10.0.0.255  Mask:255.255.255.0
@@ -100,7 +101,7 @@ eth0      Link encap:Ethernet  HWaddr 92:35:d0:4c:78:10
 In yet another terminal, write 
 
 ```
-$ sudo ./containet -4 10.0.0.1/24 -s /tmp/containet-swtch.sock /bin/sh
+$ sudo ./containode -4 10.0.0.1/24 -s /tmp/containet.sock /bin/sh
 # ifconfig
 eth0      Link encap:Ethernet  HWaddr 02:d7:47:8e:18:29  
           inet addr:10.0.0.1  Bcast:10.0.0.255  Mask:255.255.255.0
