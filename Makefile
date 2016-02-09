@@ -1,10 +1,10 @@
 
 CFLAGS=-O2 -W -Wall
 
-all: tainter
+all: containet
 
-tainter: tainter.o tun.o file.o strsplit.o
-	$(CC) -o tainter tainter.o tun.o file.o strsplit.o
+containet: containet.o tun.o file.o strsplit.o
+	$(CC) -o containet containet.o tun.o file.o strsplit.o
 
 clean:
-	rm -f tainter *.o
+	rm -f containet *.o

@@ -56,6 +56,7 @@ tunopen(char *gotdev, char *wantdev, char *addr)
 	}
 
 	ifr.ifr_flags = IFF_TAP; // IFF_TUN, IFF_TAP or IFF_NO_PI
+	//ifr.ifr_flags = IFF_NO_PI; // IFF_TUN, IFF_TAP or IFF_NO_PI
 	if(wantdev != NULL)
 		strncpy(ifr.ifr_name, wantdev, IFNAMSIZ);
 
