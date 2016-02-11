@@ -61,6 +61,12 @@ ifconfig(char *devname, char *addr)
 		goto error_out;
 	}
 
+	ifr.ifr_mtu = 64000;
+	if(ioctl(cfgfd, SIOCSIFMTU, &ifr) == -1){
+		fprintf(stderr, "ioctl SIOCSIFMTU %s: %s\n", ifr.ifr_name, strerror(errno));
+		goto error_out;
+	}
+
 	if(maskbits != -1){
 		ifr.ifr_netmask.sa_family = AF_INET;
 		addrp = (struct sockaddr_in *)&ifr.ifr_netmask;
@@ -111,6 +117,19 @@ tunopen(char *gotdev, char *wantdev, char *addr)
 		fprintf(stderr, "ioctl TUNSETIFF %s: %s\n", ifr.ifr_name, strerror(errno));
 		goto error_out;
 	}
+
+	// the following is commented out. enabling offloading changes the header we get and
+	// apparently that would require using scatter-gather i/o or something. this could be
+	// performance win for cases where we can't get away with a large mtu instead.
+	// see /usr/include/linux/virtio_net.h for more information if you want to salvage this.
+#if 0
+	int flags;
+	flags = 0; //TUN_F_CSUM; //TUN_F_TSO4; //TUN_F_CSUM; //TUN_F_UFO; //TUN_F_CSUM;
+	if(ioctl(tunfd, TUNSETOFFLOAD, flags) == -1){
+		fprintf(stderr, "ioctl TUNSETOFFLOAD 0x%x: %s\n", flags, strerror(errno));
+		goto error_out;
+	}
+#endif
 
 	ifconfig(ifr.ifr_name, addr);
 

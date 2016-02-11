@@ -25,13 +25,26 @@
 
 enum {
 	MaxPorts = 128,
-	Nbuffers = 128,
-	Bufsize = 16384,
+	Nbuffers = 32,
+
+	// space for maximum ipv4 + then some
+	Bufsize = 64*1024,
+	Camsize = 8192,
+
+	AgeInterval = 5, // seconds
+	MaxAge = 2, // maximum age of a cam entry (# of AgeIntervals)
 };
 
+typedef struct Buffer Buffer;
+typedef struct Cam Cam;
 typedef struct Port Port;
 typedef struct Queue Queue;
-typedef struct Buffer Buffer;
+
+struct Cam {
+	Port *port;
+	uint16_t age;
+	uint8_t mac[6];
+};
 
 struct Buffer {
 	Queue *freeq;
@@ -57,12 +70,15 @@ struct Port {
 	Queue xmitq;
 };
 
-Port ports[128];
+
+Cam g_cams[Camsize];
+Port ports[MaxPorts];
+
 int aports = nelem(ports);
 int nports;
-pthread_t accepthr;
+pthread_t agethr;
 
-Buffer *
+static Buffer *
 qget(Queue *q)
 {
 	Buffer *bp;
@@ -81,7 +97,7 @@ qget(Queue *q)
 	return bp;
 }
 
-int
+static int
 qput(Queue *q, Buffer *bp)
 {
 	uint32_t qhead;
@@ -101,39 +117,172 @@ qput(Queue *q, Buffer *bp)
 	return -1;
 }
 
-int
+static int
 bincref(Buffer *bp)
 {
 	return __sync_fetch_and_add(&bp->nref, 1) + 1;
 }
 
-int
+static int
 bdecref(Buffer *bp)
 {
 	return __sync_fetch_and_add(&bp->nref, -1) - 1;
 }
 
+static uint32_t
+hashmac(uint8_t *buf)
+{
+	uint32_t a, b, c;
 
-void *
+	a = (uint32_t)buf[0] + ((uint32_t)buf[1]<<8);
+	b = (uint32_t)buf[2] + ((uint32_t)buf[3]<<8);
+	c = (uint32_t)buf[4] + ((uint32_t)buf[5]<<8);
+
+// from lookup3.c, by Bob Jenkins, May 2006, Public Domain.
+// http://burtleburtle.net/bob/c/lookup3.c
+#define rot32(x,k) (((x)<<(k)) | ((x)>>(32-(k))))
+	c ^= b; c -= rot32(b,14);
+	a ^= c; a -= rot32(c,11);
+	b ^= a; b -= rot32(a,25);
+	c ^= b; c -= rot32(b,16);
+	a ^= c; a -= rot32(c,4);
+	b ^= a; b -= rot32(a,14);
+	c ^= b; c -= rot32(b,24);
+#undef rot32
+
+	return c;
+}
+
+static int
+cmpmac(uint8_t *a, uint8_t *b)
+{
+	int i, rv;
+	rv = 0;
+	for(i = 0; i < 6; i++)
+		rv += a[i] != b[i];
+	return rv;
+}
+
+static void
+copymac(uint8_t *dst, uint8_t *src)
+{
+	int i;
+	for(i = 0; i < 6; i++)
+		dst[i] = src[i];
+}
+
+static Cam *
+camlook(Cam *cams, uint8_t *mac)
+{
+	Cam *cam;
+	uint32_t hash;
+	int i;
+
+	hash = hashmac(mac) & (Camsize-1);
+	for(i = 1; i <= Camsize; i++){
+		cam = cams + hash;
+		if(cmpmac(cam->mac, mac) == 0 || cam->port == NULL)
+			return cam;
+		hash = (hash+i) & (Camsize-1);
+	}
+
+	return NULL;
+}
+
+#if 0
+static void
+pktdump(Buffer *bp)
+{
+	static pthread_mutex_t lock;
+	uint8_t *pkt;
+	int i;
+
+	pthread_mutex_lock(&lock);
+	pkt = bp->buf;
+	for(i = 0; i < bp->len; i++){
+		if((i & 15) == 0)
+			fprintf(stderr, "%4d:", i);
+		fprintf(stderr, " %02x", pkt[i]);
+		if((i & 15) == 15)
+			fprintf(stderr, "\n");
+	}
+	if((i & 15) != 0)
+		fprintf(stderr, "\n");
+	pthread_mutex_unlock(&lock);
+}
+#endif
+
+static void *
+agecam(void *aux)
+{
+	Cam *cam;
+	uint32_t i;
+	uint16_t age;
+	uint8_t zeromac[6] = {0};
+
+	for(;;){
+		for(i = 0; i < Camsize; i++){
+			cam = g_cams + i;
+			age = __sync_fetch_and_add(&cam->age, 1) + 1;
+			if(cam->port != NULL && age >= MaxAge){
+				fprintf(stderr, "aged port %ld\n", cam->port - ports);
+				cam->port = NULL;
+				copymac(cam->mac, zeromac);
+			}
+		}
+		sleep(AgeInterval);
+	}
+
+	return aux;
+}
+
+static void *
 reader(void *aport)
 {
-	Port *port = (Port *)aport;
 	Buffer *bp;
+	Port *port;
+	Cam *cam;
+	uint8_t *dstmac, *srcmac;
 	int i, nrd, nref;
 
+	port = (Port *)aport;
 	for(;;){
 		bp = qget(&port->freeq);
 
 		nrd = read(port->fd, bp->buf, bp->cap);
 		bp->len = nrd;
 
+		dstmac = (uint8_t *)bp->buf + 4;
+		srcmac = (uint8_t *)bp->buf + 10;
+
 		nref = 0;
-		for(i = 0; i < nports; i++){
-			if(port == (ports+i))
-				continue;
+		cam = camlook(g_cams, dstmac);
+		if(cam != NULL && cam->port != NULL){
+			// port found in cam, forward only there...
 			nref = bincref(bp);
-			if(qput(&ports[i].xmitq, bp) == -1)
+			if(qput(&cam->port->xmitq, bp) == -1)
 				nref = bdecref(bp);
+		} else {
+			// broadcast..
+			for(i = 0; i < nports; i++){
+				if(port == (ports+i))
+					continue;
+				nref = bincref(bp);
+				if(qput(&ports[i].xmitq, bp) == -1)
+					nref = bdecref(bp);
+			}
+		}
+
+		// teach the switch about the source address we just saw
+		cam = camlook(g_cams, srcmac);
+		if(cam != NULL){
+			// always update the port, so if an address moves to a different port
+			// the cam will point to that port right away.
+			copymac(cam->mac, srcmac);
+			cam->age = 0;
+			cam->port = port;
+		} else {
+			fprintf(stderr, "cam presumably full..\n");
 		}
 
 		// ref is zero after the forward loop. it didn't go anywhere, so drop it.
@@ -143,7 +292,7 @@ reader(void *aport)
 	return port;
 }
 
-void *
+static void *
 writer(void *aport)
 {
 	Port *port = (Port *)aport;
@@ -153,6 +302,7 @@ writer(void *aport)
 	for(;;){
 		bp = qget(&port->xmitq);
 		if(bp->len > 0){
+			*(uint32_t *)bp->buf = 0;
 			nwr = write(port->fd, bp->buf, bp->len);
 			if(nwr != bp->len){
 				fprintf(stderr, "short write on port %ld: %d wanted %d\n", port - ports, nwr, bp->len);
@@ -166,7 +316,7 @@ writer(void *aport)
 }
 
 
-void *
+static void *
 acceptor(void *dsockp)
 {
 	char buf[32];
@@ -243,8 +393,8 @@ main(int argc, char *argv[])
 		goto caseusage;
 	}
 
+	pthread_create(&agethr, NULL, agecam, NULL);
 	acceptor(&dsock);
-//	pthread_create(&accepthr, NULL, acceptor, &dsock);
 
 	return 0;
 }
