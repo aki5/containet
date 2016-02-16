@@ -319,7 +319,7 @@ writer(void *aport)
 static void *
 acceptor(void *dsockp)
 {
-	char buf[32];
+	char buf[256];
 	int fd, newfd, dsock = *(int*)dsockp;
 	int i, nrd;
 

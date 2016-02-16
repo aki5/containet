@@ -41,6 +41,9 @@ smprintf(char *fmt, ...)
 	va_start(va, fmt);
 	len = vsnprintf(buf, cap, fmt, va);
 	va_end(va);
+
+	// clamp just in case vsnprintf is broken.
+	len = len < cap ? len : cap-1;
 	buf[len] = '\0';
 
 	return buf;
