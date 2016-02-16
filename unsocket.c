@@ -119,8 +119,11 @@ recvfd(int fd, int *passfdp, char *buf, int len)
 	if((nrd = recvmsg(fd, &msg, 0)) == -1)
 		return -1;
 
-	cmsg = CMSG_FIRSTHDR(&msg);
-	memcpy(passfdp, CMSG_DATA(cmsg), sizeof *passfdp);
+	if((cmsg = CMSG_FIRSTHDR(&msg)) != NULL){
+		memcpy(passfdp, CMSG_DATA(cmsg), sizeof *passfdp);
+	} else {
+		*passfdp = -1;
+	}
 
 	return nrd;
 }
