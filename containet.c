@@ -22,6 +22,7 @@
 #include "os.h"
 #include <pthread.h>
 #include "unsocket.h"
+#include "json.h"
 
 enum {
 	MaxPorts = 128,
@@ -329,7 +330,7 @@ acceptor(void *dsockp)
 			continue;
 		}
 		nrd = recvfd(fd, &newfd, buf, sizeof buf-1);
-		if(nrd > 0){
+		if(nrd > 0 && newfd != -1){
 			Port *port;
 			if(nports == aports){
 				fprintf(stderr, "out of ports\n");
