@@ -24,8 +24,12 @@
 #include "file.h"
 #include "strsplit.h"
 #include "unsocket.h"
+#include "smprintf.h"
 
 #include <sys/syscall.h> /* For SYS_xxx definitions, pivot_root.. */
+
+// not sure this is in the standard, but it is too handy for json templating to ignore.
+#define json(...) #__VA_ARGS__
 
 typedef struct Args Args;
 struct Args {
@@ -35,6 +39,7 @@ struct Args {
 	char *toproot;
 	char *topwork;
 	char *ip4addr;
+	char *identity;
 	int dsock; // domain socket to switch
 };
 
@@ -105,10 +110,22 @@ enterchild(void *arg){
 
 	ifconfig("lo", "127.0.0.1/8");
 	if(ap->dsock != -1){
+		char *buf;
 		if((fd = tunopen(ifname, "eth0", ap->ip4addr)) == -1)
 			exit(1);
-		if(sendfd(ap->dsock, fd, "hello", 5) == -1)
+		buf = smprintf(
+			json({
+				"add":{
+					"ifname":"%s",
+					"id":"%s"
+				}
+			}),
+			ifname,
+			ap->identity
+		);
+		if(sendfd(ap->dsock, fd, buf, strlen(buf)) == -1)
 			fprintf(stderr, "sendfd fail\n");
+		free(buf);
 		close(ap->dsock);
 		close(fd);
 	}
@@ -201,6 +218,38 @@ enterchild(void *arg){
 	exit(1);
 }
 
+char *identity;
+char *swtchname;
+
+
+void
+die(int sig)
+{
+	int dsock;
+	if((dsock = unsocket(SOCK_STREAM, NULL, swtchname)) == -1){
+		fprintf(stderr, "could not connect to switch %s\n", swtchname);
+		exit(1);
+	}
+
+	char *buf;
+	int len;
+	buf = smprintf(
+		json({
+			"remove":{
+				"id":"%s"
+			}
+		}),
+		identity
+	);
+	len = strlen(buf);
+	if(write(dsock, buf, len) != len){
+		fprintf(stderr, "failed to send: '%s' to switch: %s\n", buf, strerror(errno));
+	}
+	free(buf);
+	close(dsock);
+	exit(sig);
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -209,7 +258,6 @@ main(int argc, char *argv[])
 	char *toproot;
 	char *topwork;
 	char *ip4addr;
-	char *swtchname;
 	int opt, pid, status;
 	int dsock;
 
@@ -218,8 +266,9 @@ main(int argc, char *argv[])
 	topwork = NULL;
 	ip4addr = NULL;
 	swtchname = NULL;
+	identity = "unset";
 	dsock = -1;
-	while((opt = getopt(argc, argv, "r:t:w:4:s:")) != -1) {
+	while((opt = getopt(argc, argv, "r:t:w:4:s:i:")) != -1) {
 		switch(opt){
 		case 's':
 			swtchname = optarg;
@@ -240,6 +289,9 @@ main(int argc, char *argv[])
 		case 'w':
 			topwork = optarg;
 			break;
+		case 'i':
+			identity = optarg;
+			break;
 		default:
 			fprintf(stderr, "usage: %s [-r path/to/root] [-t path/to/top-dir] [-w path/to/work-dir] [-4 ip4 address] [-s path/to/switch-sock]\n", argv[0]);
 			exit(1);
@@ -250,7 +302,7 @@ main(int argc, char *argv[])
 	// having iptables around at all is a major time suck too, but we can't fix that here.
 	writefile("/sys/kernel/rcu_expedited", "1", 1);
 
-	args = (Args){argc-optind, argv+optind, root, toproot, topwork, ip4addr, dsock};
+	args = (Args){argc-optind, argv+optind, root, toproot, topwork, ip4addr, identity, dsock};
 
 	pid = clone(
 		enterchild, stackalign(childstack + sizeof childstack),
@@ -271,11 +323,12 @@ main(int argc, char *argv[])
 	}
 	if(waitpid(pid, &status, 0) == -1) {
 		fprintf(stderr, "waitpid: %s\n", strerror(errno));
-		exit(1);
+		die(1);
 	}
 	if(!WIFEXITED(status)){
 		fprintf(stderr, "error: child did not exit normally\n");
-		exit(1);
+		die(1);
 	}
-	exit(WEXITSTATUS(status));
+	die(0);
+	return 0;
 }
