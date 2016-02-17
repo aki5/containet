@@ -1,6 +1,7 @@
 
 #CFLAGS=-O2 -fomit-frame-pointer -march=sandybridge -mtune=haswell
 CFLAGS=-g
+.PHONY: all clean test
 
 HFILES=\
 	file.h\
@@ -28,5 +29,8 @@ json_test: json_test.o json.o
 
 clean:
 	rm -f json_test containode containet mocker *.o
+
+test:
+	echo no tests at this moment
 
 %.o: $(HFILES)
