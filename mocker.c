@@ -1,4 +1,26 @@
+/*
+ *	Copyright (c) 2016 Aki Nyrhinen
+ *
+ *	Permission is hereby granted, free of charge, to any person obtaining a copy
+ *	of this software and associated documentation files (the "Software"), to deal
+ *	in the Software without restriction, including without limitation the rights
+ *	to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ *	copies of the Software, and to permit persons to whom the Software is
+ *	furnished to do so, subject to the following conditions:
+ *
+ *	The above copyright notice and this permission notice shall be included in
+ *	all copies or substantial portions of the Software.
+ *
+ *	THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ *	IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ *	FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+ *	AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ *	LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ *	OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ *	THE SOFTWARE.
+ */
 
+// example use: ./mocker ubuntu:trusty
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -69,7 +91,7 @@ main(int argc, char *argv[])
 	memset(&cnk, 0, sizeof cnk);
 
 	char *authurl;
-	authurl = smprintf("https://auth.docker.io/token?service=registry.docker.io&scope=repository:%s:pull", argv[1]);
+	authurl = smprintf("https://auth.docker.io/token?service=registry.docker.io&scope=repository:%s:pull", image);
 	curl_easy_setopt(curl, CURLOPT_URL, authurl);
 	//curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, cnkappend);
@@ -109,7 +131,7 @@ main(int argc, char *argv[])
 	res = curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrlist);
 
 	char *manifesturl;
-	manifesturl = smprintf("https://registry.hub.docker.com/v2/%s/manifests/%s", argv[1], tag);
+	manifesturl = smprintf("https://registry.hub.docker.com/v2/%s/manifests/%s", image, tag);
 	curl_easy_setopt(curl, CURLOPT_URL, manifesturl);
 	cnk.len = 0;
 	res = curl_easy_perform(curl);
@@ -157,7 +179,7 @@ main(int argc, char *argv[])
 		char *bloburl;
 		FILE *fp;
 		fp = fopen(blobsum, "wb");
-		bloburl = smprintf("https://registry.hub.docker.com/v2/%s/blobs/%s", argv[1], blobsum);
+		bloburl = smprintf("https://registry.hub.docker.com/v2/%s/blobs/%s", image, blobsum);
 		curl_easy_setopt(curl, CURLOPT_URL, bloburl);
 		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, fwrite);
 		curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
