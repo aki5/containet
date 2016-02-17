@@ -19,7 +19,8 @@
  *	OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  *	THE SOFTWARE.
  */
-#include "os.h"
+#include <stdio.h>
+#include <stdlib.h>
 #include <stdarg.h>
 
 char *

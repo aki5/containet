@@ -21,10 +21,8 @@
  */
 #include <stdio.h>
 #include <stdint.h>
+#include <string.h>
 #include "json.h"
-
-#define likely(x) __builtin_expect((x),1)
-#define unlikely(x) __builtin_expect((x),0)
 
 static __thread char *jsonfile = "";
 static __thread int jsonline;
@@ -190,7 +188,7 @@ again:
 			qch = '"';
 		casestr:
 			while(len > 1 && str[1] != qch){
-				if(unlikely(len > 1 && str[1] == '\\')){
+				if(len > 1 && str[1] == '\\'){
 					switch(str[2]){
 					default:
 						str++;
@@ -398,4 +396,36 @@ jsonparse(JsonAst *ast, int *astoff, int jscap, char *buf, int *offp, int *lenp)
 		fprintf(stderr, "'\n");
 		return -1;
 	}
+}
+
+int
+jsonfield(JsonAst *ast, int off, char *buf, char *name)
+{
+	int i;
+	int keylen;
+
+	if(ast[off].type != '{'){
+		fprintf(stderr, "jsonfield: called on a non-object '%c'\n", ast[off].type);
+		return -1;
+	}
+
+	keylen = strlen(name);
+	i = off+1;
+	for(;;){
+		if(ast[i].type == '}')
+			break;
+		if(ast[i].type != JsonString){
+			fprintf(stderr, "astdump: bad type '%c', expecting string for map key", ast[i].type);
+			fwrite(buf+ast[i].off, ast[i].len, 1, stderr);
+			fprintf(stderr, "\n");
+			return -1;
+		}
+		if(keylen == ast[i].len-2 && !memcmp(buf + ast[i].off+1, name, keylen))
+			return ast[i].next;
+		i = ast[i].next;
+		// value
+		i = ast[i].next;
+		// next key.. or end.
+	}
+	return -1; // not found.
 }

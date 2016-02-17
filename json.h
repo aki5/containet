@@ -38,3 +38,5 @@ enum {
 
 int jsonparse(JsonAst *ast, int *astoff, int jscap, char *buf, int *offp, int *lenp);
 void jsonsetname(char *filename);
+
+int jsonfield(JsonAst *ast, int off, char *buf, char *name);
