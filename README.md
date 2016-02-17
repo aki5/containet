@@ -5,7 +5,7 @@ This repository is an attempt at creating clean environment for cluster
 computing, in a way this is an attempt to make the network addressing not
 only trivially configurable, but completely programmable.
 
-Currently, Containet consists of two programs, containode and containet.
+Currently, Containet consists of three programs: containode, containet and mocker.
 
 ## Containode
 
@@ -68,6 +68,11 @@ following command line options
 	Where to listen for incoming calls from containode, to inject new
 	containers into the forwarder
 ```
+
+## Mocker
+
+mocker currently just pulls images from dockerhub. it was written mostly to try out
+the json parser and to check that libcurl works ok..
 
 ## Demo
 
