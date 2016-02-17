@@ -1,6 +1,6 @@
 
 #CFLAGS=-O2 -fomit-frame-pointer -march=sandybridge -mtune=haswell
-CFLAGS=-g
+CFLAGS=-O2 -W -Wall
 .PHONY: all clean test
 
 HFILES=\

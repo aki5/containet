@@ -1,6 +1,8 @@
 
 # Containet
 
+[![Build Status](https://travis-ci.org/aki5/containet.svg?branch=master)](https://travis-ci.org/aki5/containet)
+
 This repository is an attempt at creating clean environment for cluster
 computing, in a way this is an attempt to make the network addressing not
 only trivially configurable, but completely programmable.
