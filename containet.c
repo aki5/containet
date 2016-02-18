@@ -25,7 +25,7 @@
 #include "json.h"
 
 enum {
-	MaxPorts = 128,
+	MaxPorts = 1024,
 	Nbuffers = 32,
 
 	// space for maximum ipv4 + then some
@@ -69,6 +69,7 @@ struct Port {
 	char *ifname;
 	char *id;
 	int fd;
+	int closed;
 	Queue freeq;
 	Queue xmitq;
 };
@@ -227,7 +228,7 @@ static void *
 agecam(void *aux)
 {
 	Cam *cam;
-	uint32_t i;
+	int i;
 	uint16_t age;
 	uint8_t zeromac[6] = {0};
 
@@ -239,6 +240,13 @@ agecam(void *aux)
 				fprintf(stderr, "aged port %s\n", portname(cam->port));
 				cam->port = NULL;
 				copymac(cam->mac, zeromac);
+			}
+		}
+		for(i = 0; i < nports; i++){
+			if(ports[i].closed == 1){
+				fprintf(stderr, "closed port fd\n");
+				close(ports[i].fd);
+				__sync_fetch_and_add(&ports[i].closed, 1);
 			}
 		}
 		sleep(AgeInterval);
@@ -261,6 +269,8 @@ reader(void *aport)
 		bp = qget(&port->freeq);
 
 		nrd = read(port->fd, bp->buf, bp->cap);
+		if(port->closed)
+			break;
 		bp->len = nrd;
 
 		dstmac = (uint8_t *)bp->buf + 4;
@@ -300,6 +310,12 @@ reader(void *aport)
 		if(nref == 0)
 			qput(bp->freeq, bp);
 	}
+
+	fprintf(stderr, "port %s reader exiting..\n", portname(port));
+
+	bincref(bp);
+	qput(&port->xmitq, bp);
+
 	return port;
 }
 
@@ -312,17 +328,24 @@ writer(void *aport)
 
 	for(;;){
 		bp = qget(&port->xmitq);
+		if(port->closed)
+			break;
 		if(bp->len > 0){
 			*(uint32_t *)bp->buf = 0;
 			nwr = write(port->fd, bp->buf, bp->len);
 			if(nwr != bp->len){
 				fprintf(stderr, "short write on port %s: %d wanted %d\n", portname(port), nwr, bp->len);
+				break;
 			}
 		}
 		nref = bdecref(bp);
 		if(nref == 0)
 			qput(bp->freeq, bp);
 	}
+	nref = bdecref(bp);
+	if(nref == 0)
+		qput(bp->freeq, bp);
+	fprintf(stderr, "port writer exiting\n");
 	return port;
 }
 
@@ -353,11 +376,6 @@ acceptor(void *dsockp)
 				char *ifname, *id;
 				int ifnamei, idi;
 
-				if(nports == aports){
-					fprintf(stderr, "out of ports\n");
-					continue;
-				}
-
 				ifnamei = jsonwalk(&jsroot, addi, "ifname");
 				if(ifnamei == -1){
 					fprintf(stderr, "acceptor: add request without ifname\n");
@@ -372,6 +390,27 @@ acceptor(void *dsockp)
 
 				ifname = jsoncstr(&jsroot, ifnamei);
 				id = jsoncstr(&jsroot, idi);
+
+				for(i = 0; i < nports; i++){
+					if(ports[i].closed == 2){
+						port = ports + i;
+						free(port->id);
+						free(port->ifname);
+						port->ifname = ifname;
+						port->id = id;
+						port->fd = newfd;
+						port->closed = 0;
+						pthread_create(&port->recvthr, NULL, reader, port);
+						pthread_create(&port->xmitthr, NULL, writer, port);
+						goto add_done;
+					}
+				}
+
+				if(nports == aports){
+					fprintf(stderr, "out of ports\n");
+					close(newfd);
+					continue;
+				}
 
 				port = ports + nports;
 				pthread_mutex_init(&port->xmitq.lock, NULL);
@@ -394,9 +433,28 @@ acceptor(void *dsockp)
 				pthread_create(&port->xmitthr, NULL, writer, port);
 				__sync_fetch_and_add(&nports, 1);
 			}
-
+add_done:
 			remi = jsonwalk(&jsroot, 0, "remove");
 			if(remi != -1){
+				char *id;
+				int nclosed, idi;
+
+				idi = jsonwalk(&jsroot, remi, "id");
+				if(idi == -1){
+					fprintf(stderr, "acceptor: remove request without id\n");
+					continue;
+				}
+				id = jsoncstr(&jsroot, idi);
+				nclosed = 0;
+				for(i = 0; i < nports; i++){
+					Port *port = ports + i;
+					if(!strcmp(id, port->id) && port->closed == 0){
+						__sync_fetch_and_add(&port->closed, 1);
+						nclosed++;
+					}
+				}
+				if(nclosed == 0)
+					fprintf(stderr, "acceptor: removing %s: not found or already closed\n", id);
 			}
 		}
 		close(fd);
