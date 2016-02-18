@@ -67,8 +67,10 @@ static struct sock_filter filter[] = {
 	BPF_JUMP(BPF_JMP+BPF_JEQ+BPF_K, __NR_access, 0, 1),
 	BPF_STMT(BPF_RET+BPF_K, SECCOMP_RET_ALLOW),
 
+#ifdef __NR_mmap
 	BPF_JUMP(BPF_JMP+BPF_JEQ+BPF_K, __NR_mmap, 0, 1),
 	BPF_STMT(BPF_RET+BPF_K, SECCOMP_RET_ALLOW),
+#endif
 
 	BPF_JUMP(BPF_JMP+BPF_JEQ+BPF_K, __NR_open, 0, 1),
 	BPF_STMT(BPF_RET+BPF_K, SECCOMP_RET_ALLOW),
@@ -79,8 +81,10 @@ static struct sock_filter filter[] = {
 	BPF_JUMP(BPF_JMP+BPF_JEQ+BPF_K, __NR_poll, 0, 1),
 	BPF_STMT(BPF_RET+BPF_K, SECCOMP_RET_ALLOW),
 
+#ifdef __NR_arch_prctl
 	BPF_JUMP(BPF_JMP+BPF_JEQ+BPF_K, __NR_arch_prctl, 0, 1),
 	BPF_STMT(BPF_RET+BPF_K, SECCOMP_RET_ALLOW),
+#endif
 
 	BPF_JUMP(BPF_JMP+BPF_JEQ+BPF_K, __NR_ioctl, 0, 1),
 	BPF_STMT(BPF_RET+BPF_K, SECCOMP_RET_ALLOW),
