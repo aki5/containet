@@ -19,37 +19,21 @@
  *	OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  *	THE SOFTWARE.
  */
-#include "os.h"
-#include "file.h"
-
+#include <string.h>
+#include "strsplit.h"
 int
-writefile(char *path, void *data, size_t len)
+strsplit(char *str, char c, char **tab, int ntab)
 {
-	int fd, nwr;
-	if((fd = open(path, O_WRONLY)) == -1){
-		fprintf(stderr, "open(\"%s\"): %s\n", path, strerror(errno));
-		return -1;
+	char *p;
+	int i;
+	for(i = 0; i < ntab; i++){
+		if((p = strchr(str, c)) == NULL)
+			break;
+		tab[i] = str;
+		*p = '\0';
+		str = p+1;
 	}
-	nwr = write(fd, data, len);
-	if(close(fd) == -1){
-		fprintf(stderr, "close(\"%s\"): %s\n", path, strerror(errno));
-		return -1;
-	}
-	return nwr;
-}
-
-int
-readfile(char *path, void *data, size_t len)
-{
-	int fd, nrd;
-	if((fd = open(path, O_RDONLY)) == -1){
-		fprintf(stderr, "open(\"%s\"): %s\n", path, strerror(errno));
-		return -1;
-	}
-	nrd = read(fd, data, len);
-	if(close(fd) == -1){
-		fprintf(stderr, "close(\"%s\"): %s\n", path, strerror(errno));
-		return -1;
-	}
-	return nrd;
+	if(i != ntab)
+		tab[i++] = str;
+	return i;
 }

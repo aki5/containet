@@ -19,21 +19,41 @@
  *	OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  *	THE SOFTWARE.
  */
-#include "os.h"
-#include "strsplit.h"
+#include <stdio.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <string.h>
+#include "file.h"
+
 int
-strsplit(char *str, char c, char **tab, int ntab)
+writefile(char *path, void *data, size_t len)
 {
-	char *p;
-	int i;
-	for(i = 0; i < ntab; i++){
-		if((p = strchr(str, c)) == NULL)
-			break;
-		tab[i] = str;
-		*p = '\0';
-		str = p+1;
+	int fd, nwr;
+	if((fd = open(path, O_WRONLY)) == -1){
+		fprintf(stderr, "open(\"%s\"): %s\n", path, strerror(errno));
+		return -1;
 	}
-	if(i != ntab)
-		tab[i++] = str;
-	return i;
+	nwr = write(fd, data, len);
+	if(close(fd) == -1){
+		fprintf(stderr, "close(\"%s\"): %s\n", path, strerror(errno));
+		return -1;
+	}
+	return nwr;
+}
+
+int
+readfile(char *path, void *data, size_t len)
+{
+	int fd, nrd;
+	if((fd = open(path, O_RDONLY)) == -1){
+		fprintf(stderr, "open(\"%s\"): %s\n", path, strerror(errno));
+		return -1;
+	}
+	nrd = read(fd, data, len);
+	if(close(fd) == -1){
+		fprintf(stderr, "close(\"%s\"): %s\n", path, strerror(errno));
+		return -1;
+	}
+	return nrd;
 }
