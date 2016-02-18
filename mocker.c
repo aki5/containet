@@ -139,7 +139,7 @@ main(int argc, char *argv[])
 	jsonparse(&root, cnk.buf, cnk.len);
 	ast = root.ast.buf;
 
-	off = jsonfield(&root, 0, "token");
+	off = jsonwalk(&root, 0, "token");
 	if(off == -1){
 		fprintf(stderr, "json: no 'token' field\n");
 		exit(1);
@@ -172,7 +172,7 @@ main(int argc, char *argv[])
 	jsonparse(&root, cnk.buf, cnk.len);
 	ast = root.ast.buf;
 
-	off = jsonfield(&root, 0, "fsLayers");
+	off = jsonwalk(&root, 0, "fsLayers");
 	if(off == -1){
 		fprintf(stderr, "json: no 'fsLayers' field\n");
 		exit(1);
@@ -187,7 +187,7 @@ main(int argc, char *argv[])
 		char *blobsum;
 		int bi;
 
-		bi = jsonfield(&root, off, "blobSum");
+		bi = jsonwalk(&root, off, "blobSum");
 		if(bi == -1){
 			fprintf(stderr, "json: no 'blobSum' field\n");
 			exit(1);

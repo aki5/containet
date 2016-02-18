@@ -66,6 +66,8 @@ struct Queue {
 struct Port {
 	pthread_t recvthr;
 	pthread_t xmitthr;
+	char *ifname;
+	char *id;
 	int fd;
 	Queue freeq;
 	Queue xmitq;
@@ -79,10 +81,12 @@ int aports = nelem(ports);
 int nports;
 pthread_t agethr;
 
-static int
-portnum(Port *port)
+static char *
+portname(Port *port)
 {
-	return (int)(port - ports);
+	static __thread char buf[128];
+	snprintf(buf, sizeof buf, "%s:%s", port->id, port->ifname);
+	return buf;
 }
 
 static Buffer *
@@ -232,7 +236,7 @@ agecam(void *aux)
 			cam = g_cams + i;
 			age = __sync_fetch_and_add(&cam->age, 1) + 1;
 			if(cam->port != NULL && age >= MaxAge){
-				fprintf(stderr, "aged port %d\n", portnum(cam->port));
+				fprintf(stderr, "aged port %s\n", portname(cam->port));
 				cam->port = NULL;
 				copymac(cam->mac, zeromac);
 			}
@@ -312,7 +316,7 @@ writer(void *aport)
 			*(uint32_t *)bp->buf = 0;
 			nwr = write(port->fd, bp->buf, bp->len);
 			if(nwr != bp->len){
-				fprintf(stderr, "short write on port %d: %d wanted %d\n", portnum(port), nwr, bp->len);
+				fprintf(stderr, "short write on port %s: %d wanted %d\n", portname(port), nwr, bp->len);
 			}
 		}
 		nref = bdecref(bp);
@@ -326,41 +330,74 @@ writer(void *aport)
 static void *
 acceptor(void *dsockp)
 {
+	JsonRoot jsroot;
 	char buf[256];
 	int fd, newfd, dsock = *(int*)dsockp;
 	int i, nrd;
 
+	memset(&jsroot, 0, sizeof jsroot);
 	for(;;){
 		if((fd = accept(dsock, NULL, NULL)) == -1){
 			fprintf(stderr, "accept: %s\n", strerror(errno));
 			continue;
 		}
 		nrd = recvfd(fd, &newfd, buf, sizeof buf-1);
-		if(nrd > 0 && newfd != -1){
-			Port *port;
-			if(nports == aports){
-				fprintf(stderr, "out of ports\n");
-				continue;
-			}
-			port = ports + nports;
-			pthread_mutex_init(&port->xmitq.lock, NULL);
-			pthread_mutex_init(&port->freeq.lock, NULL);
-			port->fd = newfd;
-			for(i = 0; i < Nbuffers; i++){
-				Buffer *bp;
-				bp = malloc(sizeof bp[0]);
-				memset(bp, 0, sizeof bp[0]);
-				bp->buf = malloc(Bufsize);
-				bp->len = 0;
-				bp->cap = Bufsize;
-				bp->freeq = &port->freeq;
-				if(qput(bp->freeq, bp) == -1)
-					fprintf(stderr, "acceptor: could not qput to port %d\n", portnum(port));
-			}
-			pthread_create(&port->recvthr, NULL, reader, port);
-			pthread_create(&port->xmitthr, NULL, writer, port);
+		if(nrd > 0){
+			int addi, remi;
 
-			__sync_fetch_and_add(&nports, 1);
+			jsonparse(&jsroot, buf, nrd);
+
+			addi = jsonwalk(&jsroot, 0, "add");
+			if(addi != -1 && newfd != -1){
+				Port *port;
+				char *ifname, *id;
+				int ifnamei, idi;
+
+				if(nports == aports){
+					fprintf(stderr, "out of ports\n");
+					continue;
+				}
+
+				ifnamei = jsonwalk(&jsroot, addi, "ifname");
+				if(ifnamei == -1){
+					fprintf(stderr, "acceptor: add request without ifname\n");
+					continue;
+				}
+
+				idi = jsonwalk(&jsroot, addi, "id");
+				if(idi == -1){
+					fprintf(stderr, "acceptor: add request without id\n");
+					continue;
+				}
+
+				ifname = jsoncstr(&jsroot, ifnamei);
+				id = jsoncstr(&jsroot, idi);
+
+				port = ports + nports;
+				pthread_mutex_init(&port->xmitq.lock, NULL);
+				pthread_mutex_init(&port->freeq.lock, NULL);
+				port->ifname = ifname;
+				port->id = id;
+				port->fd = newfd;
+				for(i = 0; i < Nbuffers; i++){
+					Buffer *bp;
+					bp = malloc(sizeof bp[0]);
+					memset(bp, 0, sizeof bp[0]);
+					bp->buf = malloc(Bufsize);
+					bp->len = 0;
+					bp->cap = Bufsize;
+					bp->freeq = &port->freeq;
+					if(qput(bp->freeq, bp) == -1)
+						fprintf(stderr, "acceptor: could not qput to port %s\n", portname(port));
+				}
+				pthread_create(&port->recvthr, NULL, reader, port);
+				pthread_create(&port->xmitthr, NULL, writer, port);
+				__sync_fetch_and_add(&nports, 1);
+			}
+
+			remi = jsonwalk(&jsroot, 0, "remove");
+			if(remi != -1){
+			}
 		}
 		close(fd);
 	}

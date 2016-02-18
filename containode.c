@@ -25,6 +25,7 @@
 #include "strsplit.h"
 #include "unsocket.h"
 #include "smprintf.h"
+#include "seccomp.h"
 
 #include <sys/syscall.h> /* For SYS_xxx definitions, pivot_root.. */
 
@@ -213,6 +214,10 @@ enterchild(void *arg){
 		}
 	}
 
+	// wow, linux programs make a lot of weird system calls, many of which I'd prefer didn't exist,
+	// this part will have to wait until a lot later.
+	//seccomp();
+
 	execv(ap->argv[0], ap->argv);
 	fprintf(stderr, "exec(\"%s\"): %s\n", ap->argv[0], strerror(errno));
 	exit(1);
@@ -250,6 +255,50 @@ die(int sig)
 	exit(sig);
 }
 
+static char *base62 =
+	"abcdefghijklmnopqrstuvwxyz"
+	"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"0123456789";
+
+char *
+idstr(uint64_t id)
+{
+
+	char *str;
+	int i;
+
+	str = malloc(12);
+	for(i = 10; i >= 0; i--){
+		str[i] = base62[id%62];
+		id /= 62;
+	}
+	str[11] = '\0';
+	return str;
+}
+
+uint64_t
+strid(char *str)
+{
+	uint64_t id;
+	int i, j;
+
+	id = 0;
+	for(i = 0; i < 11; i++){
+		for(j = 0; j < 62; j++){
+			if(base62[j] == str[i])
+				break;
+		}
+		if(j == 62){
+			fprintf(stderr, "strid: bad id string\n");
+			return ~(uint64_t)0;
+		}
+		id *= 62;
+		id += j;
+	}
+
+	return id;
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -265,8 +314,6 @@ main(int argc, char *argv[])
 	toproot = NULL;
 	topwork = NULL;
 	ip4addr = NULL;
-	swtchname = NULL;
-	identity = "unset";
 	dsock = -1;
 	while((opt = getopt(argc, argv, "r:t:w:4:s:i:")) != -1) {
 		switch(opt){
@@ -296,6 +343,26 @@ main(int argc, char *argv[])
 			fprintf(stderr, "usage: %s [-r path/to/root] [-t path/to/top-dir] [-w path/to/work-dir] [-4 ip4 address] [-s path/to/switch-sock]\n", argv[0]);
 			exit(1);
 		}
+	}
+
+	if(identity == NULL){
+		uint64_t id;
+		int rndfd;
+		rndfd = open("/dev/urandom", O_RDONLY);
+		if(rndfd == -1){
+			fprintf(stderr, "open /dev/urandom: %s\n", strerror(errno));
+			exit(1);
+		}
+		if(read(rndfd, &id, sizeof id) != sizeof id){
+			fprintf(stderr, "read /dev/urandom: %s\n", strerror(errno));
+			exit(1);
+		}
+		identity = idstr(id);
+		if(strid(identity) != id){
+			fprintf(stderr, "strid-idstr scheme is broken\n");
+			exit(1);
+		}
+		close(rndfd);
 	}
 
 	// gives a perf kick for namespace creation and teardown.

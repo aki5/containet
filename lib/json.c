@@ -472,7 +472,7 @@ jsonparse(JsonRoot *root, char *buf, int len)
 }
 
 int
-jsonfield(JsonRoot *root, int off, char *name)
+jsonwalk(JsonRoot *root, int off, char *name)
 {
 	JsonAst *ast;
 	char *buf;
@@ -486,7 +486,7 @@ jsonfield(JsonRoot *root, int off, char *name)
 	buf = root->str.buf;
 
 	if(ast[off].type != '{'){
-		fprintf(stderr, "jsonfield: called on a non-object '%c'\n", ast[off].type);
+		fprintf(stderr, "jsonwalk: called on a non-object '%c'\n", ast[off].type);
 		return -1;
 	}
 
