@@ -87,15 +87,14 @@ astdump(JsonAst *ast, int off, char *buf, char *path)
 int
 main(int argc, char *argv[])
 {
-	JsonAst *ast;
+	JsonRoot root;
 	char *buf;
-	int astoff, astlen;
 	int i, fd;
-	int off, len, nrd;
+	int nrd;
 
-	ast = NULL;
 	buf = NULL;
 
+	memset(&root, 0, sizeof root);
 	for(i = 1; i < argc; i++){
 		struct stat st;
 
@@ -121,20 +120,8 @@ main(int argc, char *argv[])
 
 
 		/* first parse to determine length.. */
-		off = 0;
-		len = nrd;
-		astlen = 0;
 		jsonsetname(argv[i]);
-		jsonparse(NULL, &astlen, 0, buf, &off, &len);
-
-		/* malloc ast, re-parse to fill it */
-		ast = realloc(ast, astlen * sizeof ast[0]);
-		off = 0;
-		len = nrd;
-		astoff = 0;
-		jsonsetname(argv[i]);
-		jsonparse(ast, &astoff, astlen, buf, &off, &len);
-
+		jsonparse(&root, buf, nrd);
 
 		//char path[512] = {0};
 		//astdump(ast, 0, buf, path);

@@ -20,6 +20,21 @@
  *	THE SOFTWARE.
  */
 typedef struct JsonAst JsonAst;
+typedef struct JsonRoot JsonRoot;
+
+struct JsonRoot {
+	struct {
+		JsonAst *buf;
+		int len;
+		int cap;
+	} ast;
+	struct {
+		char *buf;
+		int len;
+		int cap;
+	} str;
+};
+
 struct JsonAst {
 	int type;	// type of json element (JsonObject, JsonArray, JsonNumber, JsonString, JsonSymbol)
 	int next;	// offset of next json element in JsonAst array
@@ -36,7 +51,10 @@ enum {
 	JsonSymbol = 'a',
 };
 
-int jsonparse(JsonAst *ast, int *astoff, int jscap, char *buf, int *offp, int *lenp);
+//int jsonparse(JsonAst *ast, int *astoff, int jscap, char *buf, int *offp, int *lenp);
 void jsonsetname(char *filename);
 
-int jsonfield(JsonAst *ast, int off, char *buf, char *name);
+int jsonfield(JsonRoot *root, int off, char *name);
+int jsonparse(JsonRoot *root, char *buf, int len);
+
+char *jsoncstr(JsonRoot *root, int off);

@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include <stdlib.h>
 #include "json.h"
 
 static __thread char *jsonfile = "";
@@ -228,7 +229,9 @@ again:
 	return -1;
 }
 
-int
+static int jsonany(JsonAst *ast, int *astoff, int jscap, char *buf, int *offp, int *lenp);
+
+static int
 jsonarray(JsonAst *ast, int *astoff, int jscap, char *buf, int *offp, int *lenp)
 {
 	int patch, lt;
@@ -245,7 +248,7 @@ jsonarray(JsonAst *ast, int *astoff, int jscap, char *buf, int *offp, int *lenp)
 
 	ret = '[';
 	for(;;){
-		lt = jsonparse(ast, astoff, jscap, buf, offp, lenp);
+		lt = jsonany(ast, astoff, jscap, buf, offp, lenp);
 nocomma:
 		if(lt == -1){
 			ret = -1;
@@ -256,7 +259,7 @@ nocomma:
 		if(!isterminal(lt))
 			fprintf(stderr, "%s:%d: jsonarray: got '%c', expecting object or terminal\n", jsonfile, jsonline, lt);
 
-		lt = jsonparse(ast, astoff, jscap, buf, offp, lenp);
+		lt = jsonany(ast, astoff, jscap, buf, offp, lenp);
 		if(lt == -1){
 			ret = -1;
 			break;
@@ -284,7 +287,7 @@ nocomma:
 }
 
 
-int
+static int
 jsonobject(JsonAst *ast, int *astoff, int jscap, char *buf, int *offp, int *lenp)
 {
 	int patch, lt;
@@ -301,7 +304,7 @@ jsonobject(JsonAst *ast, int *astoff, int jscap, char *buf, int *offp, int *lenp
 
 	ret = '{';
 	for(;;){
-		lt = jsonparse(ast, astoff, jscap, buf, offp, lenp);
+		lt = jsonany(ast, astoff, jscap, buf, offp, lenp);
 nocomma:
 		if(lt == -1){
 			ret = -1;
@@ -312,7 +315,7 @@ nocomma:
 		if(lt != JsonString)
 			fprintf(stderr, "%s:%d: jsonobject: got '%c', expecting key ('\"')\n", jsonfile, jsonline, lt);
 
-		lt = jsonparse(ast, astoff, jscap, buf, offp, lenp);
+		lt = jsonany(ast, astoff, jscap, buf, offp, lenp);
 		if(lt == -1){
 			ret = -1;
 			break;
@@ -320,7 +323,7 @@ nocomma:
 		if(lt != ':')
 			fprintf(stderr, "%s:%d: jsonobject: got '%c', expecting colon (':')\n", jsonfile, jsonline, lt);
 
-		lt = jsonparse(ast, astoff, jscap, buf, offp, lenp);
+		lt = jsonany(ast, astoff, jscap, buf, offp, lenp);
 		if(lt == -1){
 			ret = -1;
 			break;
@@ -328,7 +331,7 @@ nocomma:
 		if(!isterminal(lt))
 			fprintf(stderr, "%s:%d: jsonobject: got '%c', expecting object or terminal\n", jsonfile, jsonline, lt);
 
-		lt = jsonparse(ast, astoff, jscap, buf, offp, lenp);
+		lt = jsonany(ast, astoff, jscap, buf, offp, lenp);
 		if(lt == -1){
 			ret = -1;
 			break;
@@ -363,8 +366,8 @@ jsonsetname(char *filename)
 	jsonfile = filename;
 }
 
-int
-jsonparse(JsonAst *ast, int *astoff, int jscap, char *buf, int *offp, int *lenp)
+static int
+jsonany(JsonAst *ast, int *astoff, int jscap, char *buf, int *offp, int *lenp)
 {
 	char *tok;
 	int patch, lt;
@@ -391,18 +394,96 @@ jsonparse(JsonAst *ast, int *astoff, int jscap, char *buf, int *offp, int *lenp)
 		*astoff = patch+1;
 		return lt;
 	default:
-		fprintf(stderr, "%s:%d: jsonparse: unexpected token: '", jsonfile, jsonline);
+		fprintf(stderr, "%s:%d: jsonany: unexpected token: '", jsonfile, jsonline);
 		fwrite(tok, *offp - (tok-buf), 1, stderr);
 		fprintf(stderr, "'\n");
 		return -1;
 	}
 }
 
-int
-jsonfield(JsonAst *ast, int off, char *buf, char *name)
+// this isn't exactly my finest hour...
+char *
+jsoncstr(JsonRoot *root, int i)
 {
+	JsonAst *ast;
+	char *buf, *str;
+
+	ast = root->ast.buf;
+	if(ast[i].type != JsonString){
+		fprintf(stderr, "jsoncstring: element is '%c', want string\n", ast[i].type);
+		return NULL;
+	}
+	if(ast[i].len < 2){
+		fprintf(stderr, "jsoncstring: element too short (%d) to be a valid json string\n", ast[i].len);
+		return NULL;
+	}
+	if((str = malloc(ast[i].len-1)) == NULL){
+		fprintf(stderr, "jsoncstr: malloc failed\n");
+		return NULL;
+	}
+
+	buf = root->str.buf;
+	memcpy(str, buf + ast[i].off + 1, ast[i].len-2);
+	str[ast[i].len-2] = '\0';
+
+	return str;
+}
+
+int
+jsonparse(JsonRoot *root, char *buf, int len)
+{
+	JsonAst *ast;
+	int off, buflen, jsoff, jscap;
+
+	ast = root->ast.buf;
+	jscap = root->ast.cap;
+	off = 0;
+	buflen = len;
+	jsoff = 0;
+
+	jsonline = 1;
+	if(jsonany(ast, &jsoff, jscap, buf, &off, &buflen) == -1)
+		return -1;
+
+	if(jscap < jsoff){
+		jscap = jsoff;
+		jsonline = 1;
+		if((ast = realloc(ast, jscap * sizeof ast[0])) == NULL){
+			fprintf(stderr, "jsonroot: cannot malloc ast\n");
+			return -1;
+		}
+
+		jsoff = 0;
+		off = 0;
+		buflen = len;
+		if(jsonany(ast, &jsoff, jscap, buf, &off, &buflen) == -1)
+			return -1;
+	}
+
+	root->ast.buf = ast;
+	root->ast.len = jsoff;
+	root->ast.cap = jscap;
+
+	root->str.buf = buf;
+	root->str.len = len;
+	root->str.cap = len;
+
+	return 0;
+}
+
+int
+jsonfield(JsonRoot *root, int off, char *name)
+{
+	JsonAst *ast;
+	char *buf;
 	int i;
 	int keylen;
+
+	if(off == -1)
+		return -1;
+
+	ast = root->ast.buf;
+	buf = root->str.buf;
 
 	if(ast[off].type != '{'){
 		fprintf(stderr, "jsonfield: called on a non-object '%c'\n", ast[off].type);
