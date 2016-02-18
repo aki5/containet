@@ -32,7 +32,7 @@ enum {
 	Bufsize = 64*1024,
 	Camsize = 8192,
 
-	AgeInterval = 5, // seconds
+	AgeInterval = 10, // seconds
 	MaxAge = 2, // maximum age of a cam entry (# of AgeIntervals)
 };
 
@@ -233,18 +233,19 @@ agecam(void *aux)
 	uint8_t zeromac[6] = {0};
 
 	for(;;){
+
 		for(i = 0; i < Camsize; i++){
 			cam = g_cams + i;
 			age = __sync_fetch_and_add(&cam->age, 1) + 1;
-			if(cam->port != NULL && age >= MaxAge){
-				fprintf(stderr, "aged port %s\n", portname(cam->port));
+			if(cam->port != NULL && (age >= MaxAge || cam->port->closed != 0)){
+				fprintf(stderr, "%s: aged cam entry\n", portname(cam->port));
 				cam->port = NULL;
 				copymac(cam->mac, zeromac);
 			}
 		}
 		for(i = 0; i < nports; i++){
 			if(ports[i].closed == 1){
-				fprintf(stderr, "closed port fd\n");
+				fprintf(stderr, "%s: closed fd\n", portname(ports+i));
 				close(ports[i].fd);
 				__sync_fetch_and_add(&ports[i].closed, 1);
 			}
@@ -311,7 +312,7 @@ reader(void *aport)
 			qput(bp->freeq, bp);
 	}
 
-	fprintf(stderr, "port %s reader exiting..\n", portname(port));
+	fprintf(stderr, "%s: reader exiting..\n", portname(port));
 
 	bincref(bp);
 	qput(&port->xmitq, bp);
@@ -334,7 +335,7 @@ writer(void *aport)
 			*(uint32_t *)bp->buf = 0;
 			nwr = write(port->fd, bp->buf, bp->len);
 			if(nwr != bp->len){
-				fprintf(stderr, "short write on port %s: %d wanted %d\n", portname(port), nwr, bp->len);
+				fprintf(stderr, "%s: short write, got %d wanted %d\n", portname(port), nwr, bp->len);
 				break;
 			}
 		}
@@ -345,7 +346,7 @@ writer(void *aport)
 	nref = bdecref(bp);
 	if(nref == 0)
 		qput(bp->freeq, bp);
-	fprintf(stderr, "port writer exiting\n");
+	fprintf(stderr, "%s: writer exiting\n", portname(port));
 	return port;
 }
 
@@ -427,7 +428,7 @@ acceptor(void *dsockp)
 					bp->cap = Bufsize;
 					bp->freeq = &port->freeq;
 					if(qput(bp->freeq, bp) == -1)
-						fprintf(stderr, "acceptor: could not qput to port %s\n", portname(port));
+						fprintf(stderr, "%s: acceptor: could not qput\n", portname(port));
 				}
 				pthread_create(&port->recvthr, NULL, reader, port);
 				pthread_create(&port->xmitthr, NULL, writer, port);
