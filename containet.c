@@ -79,6 +79,12 @@ int aports = nelem(ports);
 int nports;
 pthread_t agethr;
 
+static int
+portnum(Port *port)
+{
+	return (int)(port - ports);
+}
+
 static Buffer *
 qget(Queue *q)
 {
@@ -226,7 +232,7 @@ agecam(void *aux)
 			cam = g_cams + i;
 			age = __sync_fetch_and_add(&cam->age, 1) + 1;
 			if(cam->port != NULL && age >= MaxAge){
-				fprintf(stderr, "aged port %ld\n", cam->port - ports);
+				fprintf(stderr, "aged port %d\n", portnum(cam->port));
 				cam->port = NULL;
 				copymac(cam->mac, zeromac);
 			}
@@ -306,7 +312,7 @@ writer(void *aport)
 			*(uint32_t *)bp->buf = 0;
 			nwr = write(port->fd, bp->buf, bp->len);
 			if(nwr != bp->len){
-				fprintf(stderr, "short write on port %ld: %d wanted %d\n", port - ports, nwr, bp->len);
+				fprintf(stderr, "short write on port %d: %d wanted %d\n", portnum(port), nwr, bp->len);
 			}
 		}
 		nref = bdecref(bp);
@@ -349,7 +355,7 @@ acceptor(void *dsockp)
 				bp->cap = Bufsize;
 				bp->freeq = &port->freeq;
 				if(qput(bp->freeq, bp) == -1)
-					fprintf(stderr, "acceptor: could not qput to port %ld\n", port - ports);
+					fprintf(stderr, "acceptor: could not qput to port %d\n", portnum(port));
 			}
 			pthread_create(&port->recvthr, NULL, reader, port);
 			pthread_create(&port->xmitthr, NULL, writer, port);

@@ -24,20 +24,21 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <curl/curl.h>
 #include <unistd.h>
+#include <curl/curl.h>
 #include "json.h"
 #include "smprintf.h"
 
 typedef struct Chunk Chunk;
 struct Chunk {
+	FILE *fp;
 	char *buf;
 	size_t len;
 	size_t cap;
 };
 
 static size_t
-cnkappend(void *data, size_t elsize, size_t numel, void *acnk)
+cnkbwrite(void *data, size_t elsize, size_t numel, void *acnk)
 {
 	Chunk *cnk = (Chunk *)acnk;
 	size_t len = elsize * numel;
@@ -53,6 +54,32 @@ cnkappend(void *data, size_t elsize, size_t numel, void *acnk)
 	memcpy(cnk->buf + cnk->len, data, len);
 	cnk->len += len;
 	return len;
+}
+
+static size_t
+cnkheader(char *buffer, size_t size, size_t nitems, void *acnk)
+{
+	static char *tag = "Content-Length:";
+	Chunk *cnk = (Chunk *)acnk;
+	size_t len;
+
+	len = size *nitems;
+	if(len >= strlen(tag) && !memcmp(buffer, tag, strlen(tag))){
+		cnk->len = 0;
+		cnk->cap = strtol(buffer + strlen(tag) + 1, NULL, 10);
+		fprintf(stderr, "cnkheader: cap %zd\n", cnk->cap);
+	}
+
+	return nitems * size;
+}
+
+static size_t
+cnkfwrite(void *data, size_t elsize, size_t numel, void *acnk)
+{
+	Chunk *cnk = (Chunk *)acnk;
+	cnk->len += elsize*numel;
+	fprintf(stderr, "%6.2f %%\n", (100.0*cnk->len)/cnk->cap);
+	return fwrite(data, elsize, numel, cnk->fp);
 }
 
 int
@@ -94,7 +121,7 @@ main(int argc, char *argv[])
 	authurl = smprintf("https://auth.docker.io/token?service=registry.docker.io&scope=repository:%s:pull", image);
 	curl_easy_setopt(curl, CURLOPT_URL, authurl);
 	//curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
-	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, cnkappend);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, cnkbwrite);
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &cnk);
 	res = curl_easy_perform(curl);
 	if(res != CURLE_OK){
@@ -104,27 +131,26 @@ main(int argc, char *argv[])
 	free(authurl);
 
 	/* this really belongs in a library.. and we need a JsonRoot type */
+	JsonRoot root;
 	JsonAst *ast;
-	int off, len, jsoff, jscap;
-	jscap = 0;
-	off = 0;
-	len = cnk.len;
-	jsonparse(NULL, &jscap, jscap, cnk.buf, &off, &len);
+	int off;
 
-	ast = malloc(jscap * sizeof ast[0]);
-	jsoff = 0;
-	off = 0;
-	len = cnk.len;
-	jsonparse(ast, &jsoff, jscap, cnk.buf, &off, &len);
+	memset(&root, 0, sizeof root);
+	jsonparse(&root, cnk.buf, cnk.len);
+	ast = root.ast.buf;
 
-	off = jsonfield(ast, 0, cnk.buf, "token");
+	off = jsonfield(&root, 0, "token");
 	if(off == -1){
 		fprintf(stderr, "json: no 'token' field\n");
 		exit(1);
 	}
 
-	char *token = cnk.buf + ast[off].off + 1;
-	token[ast[off].len - 2] = '\0';
+	char *token;
+	token = jsoncstr(&root, off);
+	if(token == NULL){
+			fprintf(stderr, "json: bad value for 'token'\n");
+			exit(1);
+	}
 
 	struct curl_slist *hdrlist;
 	hdrlist = curl_slist_append(NULL, smprintf("Authorization: Bearer %s", token));
@@ -139,27 +165,19 @@ main(int argc, char *argv[])
 		fprintf(stderr, "curl_easy_perform: %s\n", curl_easy_strerror(res));
 		exit(1);
 	}
+
 	free(manifesturl);
+	free(token);
 
+	jsonparse(&root, cnk.buf, cnk.len);
+	ast = root.ast.buf;
 
-	// again, this is pretty stupid..
-	jscap = 0;
-	off = 0;
-	len = cnk.len;
-	jsonparse(NULL, &jscap, jscap, cnk.buf, &off, &len);
-
-	ast = realloc(ast, jscap * sizeof ast[0]);
-	jsoff = 0;
-	off = 0;
-	len = cnk.len;
-	jsonparse(ast, &jsoff, jscap, cnk.buf, &off, &len);
-
-
-	off = jsonfield(ast, 0, cnk.buf, "fsLayers");
+	off = jsonfield(&root, 0, "fsLayers");
 	if(off == -1){
 		fprintf(stderr, "json: no 'fsLayers' field\n");
 		exit(1);
 	}
+
 	if(ast[off].type != '['){
 		fprintf(stderr, "json: 'fsLayers' is '%c', not an array\n", ast[off].type);
 		exit(1);
@@ -168,22 +186,34 @@ main(int argc, char *argv[])
 	while(ast[off].type != ']'){
 		char *blobsum;
 		int bi;
-		bi = jsonfield(ast, off, cnk.buf, "blobSum");
+
+		bi = jsonfield(&root, off, "blobSum");
 		if(bi == -1){
-			fprintf(stderr, "blobSum not found for layer\n");
+			fprintf(stderr, "json: no 'blobSum' field\n");
 			exit(1);
 		}
-		blobsum = cnk.buf + ast[bi].off + 1;
-		blobsum[ast[bi].len - 2] = '\0';
 
+		blobsum = jsoncstr(&root, bi);
+		if(blobsum == NULL){
+			fprintf(stderr, "json: bad value for 'blobSum'\n");
+			exit(1);
+		}
+
+		Chunk blobcnk;
 		char *bloburl;
 		FILE *fp;
+
+		memset(&blobcnk, 0, sizeof blobcnk);
 		fp = fopen(blobsum, "wb");
 		bloburl = smprintf("https://registry.hub.docker.com/v2/%s/blobs/%s", image, blobsum);
+		blobcnk.fp = fp;
 		curl_easy_setopt(curl, CURLOPT_URL, bloburl);
-		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, fwrite);
-		curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
+		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, cnkfwrite);
+		curl_easy_setopt(curl, CURLOPT_WRITEDATA, &blobcnk);
 		curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+		curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, cnkheader);
+		curl_easy_setopt(curl, CURLOPT_HEADERDATA, &blobcnk);
+
 		res = curl_easy_perform(curl);
 		if(res != CURLE_OK){
 			fprintf(stderr, "curl_easy_perform: %s\n", curl_easy_strerror(res));
@@ -191,12 +221,12 @@ main(int argc, char *argv[])
 		}
 		fclose(fp);
 		free(bloburl);
+		free(blobsum);
 
 		printf("blobsum: %s\n", blobsum);
 		off = ast[off].next;
 	}
 
-	//write(1, cnk.buf, cnk.len);
 
 	curl_easy_cleanup(curl);
 	curl_slist_free_all(hdrlist);
