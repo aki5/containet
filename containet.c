@@ -256,18 +256,17 @@ agecam(void *aux)
 		}
 		for(i = 0; i < nports; i++){
 			Port *port;
-			pthread_mutex_lock(&portlock);
 			port = ports + i;
 			if(__sync_bool_compare_and_swap(&port->closed, 1, 2)){
-				fprintf(stderr, "%s: closed fd\n", portname(ports+i));
+				// this close takes a long time because it tears down a network namespace.
 				close(port->fd);
 				pthread_kill(port->xmitthr, SIGHUP);
 				pthread_kill(port->recvthr, SIGHUP);
 				pthread_join(port->xmitthr, NULL);
 				pthread_join(port->recvthr, NULL);
-				port->closed = 3;
+				fprintf(stderr, "%s: closed fd\n", portname(ports+i));
+				__sync_fetch_and_add(&port->closed, 1);
 			}
-			pthread_mutex_unlock(&portlock);
 		}
 		sleep(AgeInterval);
 	}
@@ -369,6 +368,8 @@ struct Ctrlconn {
 	pthread_t thr;
 	int fd;
 };
+
+static void *acceptor(void *dsockp);
 
 static void *
 ctrlhandler(void *actrl)
@@ -494,6 +495,36 @@ ctrlhandler(void *actrl)
 				else if(nclosed == 0)
 					fprintf(stderr, "acceptor: remove-etherfd %s: already closed\n", nodeid);
 			}
+
+			obji = jsonwalk(&jsroot, 0, "add-ctrlsock");
+			if(obji != -1){
+				char *nodeid;
+				int nodeidi;
+
+				if(newfd == -1){
+					fprintf(stderr, "acceptor: add-ctrlsock without fd\n");
+					continue;
+				}
+				nodeidi = jsonwalk(&jsroot, obji, "nodeid");
+				if(nodeidi == -1){
+					fprintf(stderr, "acceptor: add-ctrlsock request without nodeid\n");
+					close(newfd);
+					continue;
+				}
+				nodeid = jsoncstr(&jsroot, nodeidi);
+				fprintf(stderr, "creating acceptor for %s\n", nodeid);
+
+				if(listen(newfd, 5) == -1){
+					fprintf(stderr, "%s: listen: %s\n", nodeid, strerror(errno));
+					close(newfd);
+					continue;
+				}
+
+				Ctrlconn *nctrl;
+				nctrl = malloc(sizeof nctrl[0]);
+				nctrl->fd = newfd;
+				pthread_create(&nctrl->thr, NULL, acceptor, nctrl);
+			}
 		}
 	}
 	close(fd);
@@ -502,22 +533,25 @@ ctrlhandler(void *actrl)
 }
 
 static void *
-acceptor(void *dsockp)
+acceptor(void *actrl)
 {
 	Ctrlconn *ctrl;
-	int fd, dsock;
+	Ctrlconn *nctrl;
+	int fd;
 
-	dsock = *(int*)dsockp;
+	ctrl = (Ctrlconn *)actrl;
 	for(;;){
-		if((fd = accept(dsock, NULL, NULL)) == -1){
+		if((fd = accept(ctrl->fd, NULL, NULL)) == -1){
 			fprintf(stderr, "accept: %s\n", strerror(errno));
 			continue;
 		}
-		ctrl = malloc(sizeof ctrl[0]);
-		ctrl->fd = fd;
-		pthread_create(&ctrl->thr, NULL, ctrlhandler, ctrl);
+		nctrl = malloc(sizeof nctrl[0]);
+		nctrl->fd = fd;
+		pthread_create(&nctrl->thr, NULL, ctrlhandler, nctrl);
 	}
 
+	close(ctrl->fd);
+	free(ctrl);
 	return NULL;
 }
 
@@ -571,7 +605,11 @@ main(int argc, char *argv[])
 	}
 
 	pthread_create(&agethr, NULL, agecam, NULL);
-	acceptor(&dsock);
+
+	Ctrlconn *nctrl;
+	nctrl = malloc(sizeof nctrl[0]);
+	nctrl->fd = dsock;
+	acceptor((void*)nctrl);
 
 	return 0;
 }

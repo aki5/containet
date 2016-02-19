@@ -41,7 +41,8 @@ struct Args {
 	char *topwork;
 	char *ip4addr;
 	char *identity;
-	int dsock; // domain socket to switch
+	int ctrlsock; // domain socket to switch
+	char *postname;
 };
 
 static struct {
@@ -110,14 +111,17 @@ static int
 enterchild(void *arg){
 	Args *ap = (Args *)arg;
 	char ifname[256];
-	int i, fd;
+	int i;
 
 	sethostname(identity, strlen(identity));
 
 	ifconfig("lo", "127.0.0.1/8");
-	if(ap->dsock != -1){
+
+	if(ap->ctrlsock != -1){
 		char *buf;
-		if((fd = tunopen(ifname, "eth0", ap->ip4addr)) == -1)
+		int tunfd;
+
+		if((tunfd = tunopen(ifname, "eth0", ap->ip4addr)) == -1)
 			exit(1);
 		buf = smprintf(
 			json({
@@ -129,11 +133,10 @@ enterchild(void *arg){
 			ifname,
 			ap->identity
 		);
-		if(sendfd(ap->dsock, fd, buf, strlen(buf)) == -1)
+		if(sendfd(ap->ctrlsock, tunfd, buf, strlen(buf)) == -1)
 			fprintf(stderr, "sendfd fail\n");
 		free(buf);
-		close(ap->dsock);
-		close(fd);
+		close(tunfd);
 	}
 
 	/*
@@ -218,6 +221,34 @@ enterchild(void *arg){
 		}
 	}
 
+
+	if(ap->postname != NULL){
+		char *buf;
+		int postfd;
+
+		if((postfd = unsocket(SOCK_STREAM, ap->postname, NULL)) == -1){
+			fprintf(stderr, "could not post %s\n", ap->postname);
+			exit(1);
+		}
+
+		buf = smprintf(
+			json({
+				"add-ctrlsock":{
+					"nodeid":"%s"
+				}
+			}),
+			ap->identity
+		);
+		if(sendfd(ap->ctrlsock, postfd, buf, strlen(buf)) == -1)
+			fprintf(stderr, "sendfd fail\n");
+		free(buf);
+		close(postfd);
+	}
+
+	if(ap->ctrlsock != -1)
+		close(ap->ctrlsock);
+
+
 	// wow, linux programs make a lot of weird system calls, many of which I'd prefer didn't exist,
 	// this part will have to wait until a lot later.
 	//seccomp();
@@ -231,8 +262,8 @@ static void
 die(int sig)
 {
 	if(swtchname != NULL){
-		int dsock;
-		if((dsock = unsocket(SOCK_STREAM, NULL, swtchname)) == -1){
+		int ctrlsock;
+		if((ctrlsock = unsocket(SOCK_STREAM, NULL, swtchname)) == -1){
 			fprintf(stderr, "could not connect to switch %s\n", swtchname);
 			exit(1);
 		}
@@ -248,11 +279,11 @@ die(int sig)
 			identity
 		);
 		len = strlen(buf);
-		if(write(dsock, buf, len) != len){
+		if(write(ctrlsock, buf, len) != len){
 			fprintf(stderr, "failed to send: '%s' to switch: %s\n", buf, strerror(errno));
 		}
 		free(buf);
-		close(dsock);
+		close(ctrlsock);
 	}
 	exit(sig);
 }
@@ -309,15 +340,17 @@ main(int argc, char *argv[])
 	char *toproot;
 	char *topwork;
 	char *ip4addr;
+	char *postname;
 	int opt, pid, status;
-	int dsock;
+	int ctrlsock;
 	int cloneflags;
 
 	root = NULL;
 	toproot = NULL;
 	topwork = NULL;
 	ip4addr = NULL;
-	dsock = -1;
+	postname = NULL;
+	ctrlsock = -1;
 
 	cloneflags =
 		SIGCHLD |	// new process
@@ -327,15 +360,17 @@ main(int argc, char *argv[])
 		CLONE_NEWIPC|	// new sysvipc name space
 		CLONE_NEWNET;	// new network namespace
 
-
-	while((opt = getopt(argc, argv, "r:t:w:4:s:i:NI")) != -1) {
+	while((opt = getopt(argc, argv, "r:t:w:4:s:i:NIp:")) != -1) {
 		switch(opt){
 		case 's':
 			swtchname = optarg;
-			if((dsock = unsocket(SOCK_STREAM, NULL, swtchname)) == -1){
+			if((ctrlsock = unsocket(SOCK_STREAM, NULL, swtchname)) == -1){
 				fprintf(stderr, "could not connect to switch %s\n", swtchname);
 				exit(1);
 			}
+			break;
+		case 'p':
+			postname = optarg;
 			break;
 		case '4':
 			ip4addr = optarg;
@@ -359,7 +394,7 @@ main(int argc, char *argv[])
 			cloneflags &= ~CLONE_NEWIPC;
 			break;
 		default:
-			fprintf(stderr, "usage: %s [-i identity] [-r path/to/root] [-t path/to/top-dir] [-w path/to/work-dir] [-4 ip4 address] [-s path/to/switch-sock] [-I] [-N]\n", argv[0]);
+			fprintf(stderr, "usage: %s [-i identity] [-r path/to/root] [-t path/to/top-dir] [-w path/to/work-dir] [-4 ip4 address] [-s path/to/switch-sock] [-p where/to/post/ctrl-sock] [-I] [-N]\n", argv[0]);
 			exit(1);
 		}
 	}
@@ -388,7 +423,17 @@ main(int argc, char *argv[])
 	// having iptables around at all is a major time suck too, but we can't fix that here.
 	writefile("/sys/kernel/rcu_expedited", "1", 1);
 
-	args = (Args){argc-optind, argv+optind, root, toproot, topwork, ip4addr, identity, dsock};
+	args = (Args){
+		.argc = argc-optind,
+		.argv = argv+optind,
+		.root = root,
+		.toproot = toproot,
+		.topwork = topwork,
+		.ip4addr = ip4addr,
+		.identity = identity,
+		.ctrlsock = ctrlsock,
+		.postname = postname
+	};
 
 	pid = clone(
 		enterchild, stackalign(childstack + sizeof childstack),
