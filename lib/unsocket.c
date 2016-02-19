@@ -84,18 +84,20 @@ sendfd(int fd, int passfd, char *buf, int len)
 	char cbuf[CMSG_SPACE(sizeof passfd)];
 
 	memset(&msg, 0, sizeof msg);
-	memset(cbuf, 0, sizeof cbuf);
 	msg.msg_iov = &io;
 	msg.msg_iovlen = 1;
-	msg.msg_control = cbuf;
-	msg.msg_controllen = sizeof cbuf;
 
-	cmsg = CMSG_FIRSTHDR(&msg);
-	cmsg->cmsg_level = SOL_SOCKET;
-	cmsg->cmsg_type = SCM_RIGHTS;
-	cmsg->cmsg_len = CMSG_LEN(sizeof passfd);
-	memcpy(CMSG_DATA(cmsg), &passfd, sizeof passfd);
-	msg.msg_controllen = cmsg->cmsg_len;
+	if(passfd != -1){
+		memset(cbuf, 0, sizeof cbuf);
+		msg.msg_control = cbuf;
+		msg.msg_controllen = sizeof cbuf;
+		cmsg = CMSG_FIRSTHDR(&msg);
+		cmsg->cmsg_level = SOL_SOCKET;
+		cmsg->cmsg_type = SCM_RIGHTS;
+		cmsg->cmsg_len = CMSG_LEN(sizeof passfd);
+		memcpy(CMSG_DATA(cmsg), &passfd, sizeof passfd);
+		msg.msg_controllen = cmsg->cmsg_len;
+	}
 
 	return sendmsg(fd, &msg, 0);
 }

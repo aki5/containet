@@ -121,9 +121,9 @@ enterchild(void *arg){
 			exit(1);
 		buf = smprintf(
 			json({
-				"add":{
+				"add-etherfd":{
 					"ifname":"%s",
-					"id":"%s"
+					"nodeid":"%s"
 				}
 			}),
 			ifname,
@@ -241,8 +241,8 @@ die(int sig)
 		int len;
 		buf = smprintf(
 			json({
-				"remove":{
-					"id":"%s"
+				"remove-etherfd":{
+					"nodeid":"%s"
 				}
 			}),
 			identity

@@ -56,6 +56,7 @@ struct Buffer {
 };
 
 struct Queue {
+	Port *port;
 	pthread_cond_t kick;
 	pthread_mutex_t lock;
 	uint32_t head;
@@ -67,7 +68,7 @@ struct Port {
 	pthread_t recvthr;
 	pthread_t xmitthr;
 	char *ifname;
-	char *id;
+	char *nodeid;
 	int fd;
 	int closed;
 	Queue freeq;
@@ -78,6 +79,7 @@ struct Port {
 static Cam g_cams[Camsize];
 static Port ports[MaxPorts];
 
+static pthread_mutex_t portlock;
 static int aports = nelem(ports);
 static int nports;
 static pthread_t agethr;
@@ -86,7 +88,7 @@ static char *
 portname(Port *port)
 {
 	static __thread char buf[128];
-	snprintf(buf, sizeof buf, "%s-%s", port->id, port->ifname);
+	snprintf(buf, sizeof buf, "%s-%s", port->nodeid, port->ifname);
 	return buf;
 }
 
@@ -98,12 +100,13 @@ qget(Queue *q)
 
 	bp = NULL;
 	pthread_mutex_lock(&q->lock);
-	while(q->head == q->tail){
+	while(q->port->closed == 0 && q->head == q->tail)
 		pthread_cond_wait(&q->kick, &q->lock);
+	if(q->head != q->tail){
+		qtail = q->tail;
+		bp = q->bufs[qtail];
+		q->tail = (qtail + 1) % nelem(q->bufs);
 	}
-	qtail = q->tail;
-	bp = q->bufs[qtail];
-	q->tail = (qtail + 1) % nelem(q->bufs);
 	pthread_mutex_unlock(&q->lock);
 
 	return bp;
@@ -127,6 +130,14 @@ qput(Queue *q, Buffer *bp)
 	pthread_mutex_unlock(&q->lock);
 
 	return -1;
+}
+
+static void
+qkick(Queue *q)
+{
+	pthread_mutex_lock(&q->lock);
+	pthread_cond_signal(&q->kick);
+	pthread_mutex_unlock(&q->lock);
 }
 
 static int
@@ -244,11 +255,19 @@ agecam(void *aux)
 			}
 		}
 		for(i = 0; i < nports; i++){
-			if(ports[i].closed == 1){
+			Port *port;
+			pthread_mutex_lock(&portlock);
+			port = ports + i;
+			if(__sync_bool_compare_and_swap(&port->closed, 1, 2)){
 				fprintf(stderr, "%s: closed fd\n", portname(ports+i));
-				close(ports[i].fd);
-				__sync_fetch_and_add(&ports[i].closed, 1);
+				close(port->fd);
+				pthread_kill(port->xmitthr, SIGHUP);
+				pthread_kill(port->recvthr, SIGHUP);
+				pthread_join(port->xmitthr, NULL);
+				pthread_join(port->recvthr, NULL);
+				port->closed = 3;
 			}
+			pthread_mutex_unlock(&portlock);
 		}
 		sleep(AgeInterval);
 	}
@@ -313,9 +332,7 @@ reader(void *aport)
 	}
 
 	fprintf(stderr, "%s: reader exiting..\n", portname(port));
-
-	bincref(bp);
-	qput(&port->xmitq, bp);
+	qkick(&port->xmitq);
 
 	return port;
 }
@@ -329,7 +346,7 @@ writer(void *aport)
 
 	for(;;){
 		bp = qget(&port->xmitq);
-		if(port->closed)
+		if(bp == NULL)
 			break;
 		if(bp->len > 0){
 			*(uint32_t *)bp->buf = 0;
@@ -343,9 +360,6 @@ writer(void *aport)
 		if(nref == 0)
 			qput(bp->freeq, bp);
 	}
-	nref = bdecref(bp);
-	if(nref == 0)
-		qput(bp->freeq, bp);
 	fprintf(stderr, "%s: writer exiting\n", portname(port));
 	return port;
 }
@@ -378,42 +392,45 @@ ctrlhandler(void *actrl)
 		if(nrd == 0)
 			break;
 		if(nrd > 0){
-			int addi, remi;
+			int obji;
 
 			jsonparse(&jsroot, buf, nrd);
 
-			addi = jsonwalk(&jsroot, 0, "add");
-			if(addi != -1 && newfd != -1){
+			obji = jsonwalk(&jsroot, 0, "add-etherfd");
+			if(obji != -1 && newfd != -1){
 				Port *port;
-				char *ifname, *id;
-				int ifnamei, idi;
+				char *ifname, *nodeid;
+				int ifnamei, nodeidi;
 
-				ifnamei = jsonwalk(&jsroot, addi, "ifname");
+				ifnamei = jsonwalk(&jsroot, obji, "ifname");
 				if(ifnamei == -1){
 					fprintf(stderr, "acceptor: add request without ifname\n");
+					close(newfd);
 					continue;
 				}
 
-				idi = jsonwalk(&jsroot, addi, "id");
-				if(idi == -1){
-					fprintf(stderr, "acceptor: add request without id\n");
+				nodeidi = jsonwalk(&jsroot, obji, "nodeid");
+				if(nodeidi == -1){
+					fprintf(stderr, "acceptor: add request without nodeid\n");
+					close(newfd);
 					continue;
 				}
 
 				ifname = jsoncstr(&jsroot, ifnamei);
-				id = jsoncstr(&jsroot, idi);
+				nodeid = jsoncstr(&jsroot, nodeidi);
 
+				pthread_mutex_lock(&portlock);
 				for(i = 0; i < nports; i++){
-					if(ports[i].closed == 2){
-						port = ports + i;
-						free(port->id);
+					port = ports + i;
+					if(__sync_bool_compare_and_swap(&port->closed, 3, 0)){
+						free(port->nodeid);
 						free(port->ifname);
 						port->ifname = ifname;
-						port->id = id;
+						port->nodeid = nodeid;
 						port->fd = newfd;
-						port->closed = 0;
 						pthread_create(&port->recvthr, NULL, reader, port);
 						pthread_create(&port->xmitthr, NULL, writer, port);
+						pthread_mutex_unlock(&portlock);
 						goto add_done;
 					}
 				}
@@ -421,14 +438,18 @@ ctrlhandler(void *actrl)
 				if(nports == aports){
 					fprintf(stderr, "out of ports\n");
 					close(newfd);
+					pthread_mutex_unlock(&portlock);
 					continue;
 				}
 
 				port = ports + nports;
+				memset(port, 0, sizeof port[0]);
 				pthread_mutex_init(&port->xmitq.lock, NULL);
 				pthread_mutex_init(&port->freeq.lock, NULL);
+				port->xmitq.port = port;
+				port->freeq.port = port;
 				port->ifname = ifname;
-				port->id = id;
+				port->nodeid = nodeid;
 				port->fd = newfd;
 				for(i = 0; i < Nbuffers; i++){
 					Buffer *bp;
@@ -444,29 +465,34 @@ ctrlhandler(void *actrl)
 				pthread_create(&port->recvthr, NULL, reader, port);
 				pthread_create(&port->xmitthr, NULL, writer, port);
 				__sync_fetch_and_add(&nports, 1);
+				pthread_mutex_unlock(&portlock);
 			}
 	add_done:
-			remi = jsonwalk(&jsroot, 0, "remove");
-			if(remi != -1){
-				char *id;
-				int nclosed, idi;
+			obji = jsonwalk(&jsroot, 0, "remove-etherfd");
+			if(obji != -1){
+				char *nodeid;
+				int nclosed, nfound, nodeidi;
 
-				idi = jsonwalk(&jsroot, remi, "id");
-				if(idi == -1){
-					fprintf(stderr, "acceptor: remove request without id\n");
+				nodeidi = jsonwalk(&jsroot, obji, "nodeid");
+				if(nodeidi == -1){
+					fprintf(stderr, "acceptor: remove request without nodeid\n");
 					continue;
 				}
-				id = jsoncstr(&jsroot, idi);
+				nodeid = jsoncstr(&jsroot, nodeidi);
 				nclosed = 0;
+				nfound = 0;
 				for(i = 0; i < nports; i++){
 					Port *port = ports + i;
-					if(!strcmp(id, port->id) && port->closed == 0){
-						__sync_fetch_and_add(&port->closed, 1);
-						nclosed++;
+					if(!strcmp(nodeid, port->nodeid)){
+						if(__sync_bool_compare_and_swap(&port->closed, 0, 1))
+							nclosed++;
+						nfound++;
 					}
 				}
-				if(nclosed == 0)
-					fprintf(stderr, "acceptor: removing %s: not found or already closed\n", id);
+				if(nfound == 0)
+					fprintf(stderr, "acceptor: remove-etherfd %s: not found\n", nodeid);
+				else if(nclosed == 0)
+					fprintf(stderr, "acceptor: remove-etherfd %s: already closed\n", nodeid);
 			}
 		}
 	}
@@ -495,12 +521,29 @@ acceptor(void *dsockp)
 	return NULL;
 }
 
+static void
+sigint(int sig)
+{
+	int oerr = errno;
+	fprintf(stderr, "got sig %d\n", sig);
+	errno = oerr;
+}
+
 int
 main(int argc, char *argv[])
 {
+	struct sigaction sa;
 	char *swtchname;
 	int opt;
 	int dsock;
+
+	sa.sa_handler = &sigint;
+	sa.sa_flags = SA_RESTART;
+	sigfillset(&sa.sa_mask);
+	if(sigaction(SIGHUP, &sa, NULL) == -1){
+		fprintf(stderr, "%s: could not set sigint handler: %s\n", argv[0], strerror(errno));
+		exit(1);
+	}
 
 	swtchname = NULL;
 	while((opt = getopt(argc, argv, "s:")) != -1) {
