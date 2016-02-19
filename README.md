@@ -29,6 +29,16 @@ Containode has the following command line options
 -w path/to/work
 	if supplied, overlayfs working directory is set to this one (and
 	overlayfs is used, instead of aufs).
+-i identity
+	Identity of the container (needs to be unique within session), also
+	hostname. If not supplied, a random 64-bit number is generated and
+	base62 encoded into a 11 character identity.
+-N
+	if supplied, a new network namespace is not created, the container
+	executes with the host network stack instead
+-I
+	if supplied, a new IPC namespace is not created, the container
+	executes with the host IPC namespace instead.
 ```
 
 All the mount name space paramters (-r, -t, -w) can be omitted, in which case

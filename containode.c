@@ -112,6 +112,8 @@ enterchild(void *arg){
 	char ifname[256];
 	int i, fd;
 
+	sethostname(identity, strlen(identity));
+
 	ifconfig("lo", "127.0.0.1/8");
 	if(ap->dsock != -1){
 		char *buf;
@@ -142,7 +144,6 @@ enterchild(void *arg){
 		fprintf(stderr, "mount(\"/\"): %s\n", strerror(errno));
 		exit(1);
 	}
-
 
 	if(ap->root != NULL){
 		/*
@@ -229,28 +230,30 @@ enterchild(void *arg){
 static void
 die(int sig)
 {
-	int dsock;
-	if((dsock = unsocket(SOCK_STREAM, NULL, swtchname)) == -1){
-		fprintf(stderr, "could not connect to switch %s\n", swtchname);
-		exit(1);
-	}
+	if(swtchname != NULL){
+		int dsock;
+		if((dsock = unsocket(SOCK_STREAM, NULL, swtchname)) == -1){
+			fprintf(stderr, "could not connect to switch %s\n", swtchname);
+			exit(1);
+		}
 
-	char *buf;
-	int len;
-	buf = smprintf(
-		json({
-			"remove":{
-				"id":"%s"
-			}
-		}),
-		identity
-	);
-	len = strlen(buf);
-	if(write(dsock, buf, len) != len){
-		fprintf(stderr, "failed to send: '%s' to switch: %s\n", buf, strerror(errno));
+		char *buf;
+		int len;
+		buf = smprintf(
+			json({
+				"remove":{
+					"id":"%s"
+				}
+			}),
+			identity
+		);
+		len = strlen(buf);
+		if(write(dsock, buf, len) != len){
+			fprintf(stderr, "failed to send: '%s' to switch: %s\n", buf, strerror(errno));
+		}
+		free(buf);
+		close(dsock);
 	}
-	free(buf);
-	close(dsock);
 	exit(sig);
 }
 
@@ -308,13 +311,24 @@ main(int argc, char *argv[])
 	char *ip4addr;
 	int opt, pid, status;
 	int dsock;
+	int cloneflags;
 
 	root = NULL;
 	toproot = NULL;
 	topwork = NULL;
 	ip4addr = NULL;
 	dsock = -1;
-	while((opt = getopt(argc, argv, "r:t:w:4:s:i:")) != -1) {
+
+	cloneflags =
+		SIGCHLD |	// new process
+		CLONE_NEWNS|	// new mount space
+		CLONE_NEWPID|	// new pid space
+		CLONE_NEWUTS|	// new uname(2), setdomainname(2) and sethostname(2)
+		CLONE_NEWIPC|	// new sysvipc name space
+		CLONE_NEWNET;	// new network namespace
+
+
+	while((opt = getopt(argc, argv, "r:t:w:4:s:i:NI")) != -1) {
 		switch(opt){
 		case 's':
 			swtchname = optarg;
@@ -338,8 +352,14 @@ main(int argc, char *argv[])
 		case 'i':
 			identity = optarg;
 			break;
+		case 'N':
+			cloneflags &= ~CLONE_NEWNET;
+			break;
+		case 'I':
+			cloneflags &= ~CLONE_NEWIPC;
+			break;
 		default:
-			fprintf(stderr, "usage: %s [-r path/to/root] [-t path/to/top-dir] [-w path/to/work-dir] [-4 ip4 address] [-s path/to/switch-sock]\n", argv[0]);
+			fprintf(stderr, "usage: %s [-i identity] [-r path/to/root] [-t path/to/top-dir] [-w path/to/work-dir] [-4 ip4 address] [-s path/to/switch-sock] [-I] [-N]\n", argv[0]);
 			exit(1);
 		}
 	}
@@ -372,14 +392,7 @@ main(int argc, char *argv[])
 
 	pid = clone(
 		enterchild, stackalign(childstack + sizeof childstack),
-		SIGCHLD |	// new process
-		CLONE_NEWNS|	// new mount space
-		CLONE_NEWPID|	// new pid space
-		CLONE_NEWUTS|	// new uname(2), setdomainname(2) and sethostname(2)
-		// these are slow to create and tear down, so try to do without them.
-		CLONE_NEWIPC|	// new sysvipc name space 
-		CLONE_NEWNET|	// new network namespace.
-		0,
+		cloneflags,
 		(void*)&args
 	);
 
