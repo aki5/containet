@@ -21,10 +21,12 @@
  */
 
 // example use: ./mocker ubuntu:trusty
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <errno.h>
 #include <curl/curl.h>
 #include "json.h"
 #include "smprintf.h"
@@ -51,7 +53,7 @@ cnkbwrite(void *data, size_t elsize, size_t numel, void *acnk)
 		fprintf(stderr, "out of memory");
 		abort();
 	}
-	memcpy(cnk->buf + cnk->len, data, len);
+	memmove(cnk->buf + cnk->len, data, len);
 	cnk->len += len;
 	return len;
 }
@@ -59,15 +61,15 @@ cnkbwrite(void *data, size_t elsize, size_t numel, void *acnk)
 static size_t
 cnkheader(char *buffer, size_t size, size_t nitems, void *acnk)
 {
-	static char *tag = "Content-Length:";
+	char *tag = "Content-Length:";
 	Chunk *cnk = (Chunk *)acnk;
 	size_t len;
 
 	len = size *nitems;
-	if(len >= strlen(tag) && !memcmp(buffer, tag, strlen(tag))){
+	if(len >= strlen(tag) && memcmp(buffer, tag, strlen(tag)) == 0){
 		cnk->len = 0;
-		cnk->cap = strtol(buffer + strlen(tag) + 1, NULL, 10);
-		fprintf(stderr, "cnkheader: cap %zd\n", cnk->cap);
+		cnk->cap = (size_t)strtol(buffer + strlen(tag) + 1, NULL, 10);
+		//fprintf(stderr, "cnkheader: cap %zd\n", cnk->cap);
 	}
 
 	return nitems * size;
@@ -78,9 +80,27 @@ cnkfwrite(void *data, size_t elsize, size_t numel, void *acnk)
 {
 	Chunk *cnk = (Chunk *)acnk;
 	cnk->len += elsize*numel;
-	fprintf(stderr, "%6.2f %%\n", (100.0*cnk->len)/cnk->cap);
+	//fprintf(stderr, "%6.2f %%\n", (100.0*cnk->len)/cnk->cap);
 	return fwrite(data, elsize, numel, cnk->fp);
 }
+
+static void
+defrog(char *str)
+{
+	for(;*str != '\0';str++){
+		if(*str >= 'a' && *str <= 'z')
+			continue;
+		if(*str >= 'A' && *str <= 'Z')
+			continue;
+		if(*str >= '0' && *str <= '9')
+			continue;
+		if(*str == '.')
+			continue;
+		*str = '_';
+	}
+}
+
+static int xflag;
 
 int
 main(int argc, char *argv[])
@@ -89,16 +109,33 @@ main(int argc, char *argv[])
 	CURLcode res;
 	char *image;
 	char *tag;
+	int opt;
 
-	if(argc != 2){
-		fprintf(stderr, "usage: %s docker-vendor/image-name\n", argv[0]);
-		exit(1);
+	while((opt = getopt(argc, argv, "xC:")) != -1) {
+		switch(opt){
+		case 'x':
+			xflag++;
+			break;
+		case 'C':
+			if(chdir(optarg) == -1){
+				fprintf(stderr, "chdir '%s': %s\n", optarg, strerror(errno));
+				exit(1);
+			}
+			break;
+		default:
+		caseusage:
+			fprintf(stderr, "usage: %s [-x extract-to] docker-vendor/image-name\n", argv[0]);
+			exit(1);
+		}
 	}
 
-	if(strchr(argv[1], '/') != NULL){
-		image = argv[1];
+	if(optind >= argc)
+		goto caseusage;
+
+	if(strchr(argv[optind], '/') != NULL){
+		image = argv[optind];
 	} else {
-		image = smprintf("library/%s", argv[1]);
+		image = smprintf("library/%s", argv[optind]);
 	}
 
 	if((tag = strchr(image, ':')) != NULL){
@@ -148,8 +185,8 @@ main(int argc, char *argv[])
 	char *token;
 	token = jsoncstr(&root, off);
 	if(token == NULL){
-			fprintf(stderr, "json: bad value for 'token'\n");
-			exit(1);
+		fprintf(stderr, "json: bad value for 'token'\n");
+		exit(1);
 	}
 
 	struct curl_slist *hdrlist;
@@ -169,6 +206,8 @@ main(int argc, char *argv[])
 	free(manifesturl);
 	free(token);
 
+	//fwrite(cnk.buf, 1, cnk.len, stdout);
+
 	jsonparse(&root, cnk.buf, cnk.len);
 	ast = root.ast.buf;
 
@@ -183,6 +222,7 @@ main(int argc, char *argv[])
 		exit(1);
 	}
 	off++;
+	int blobno = 0;
 	while(ast[off].type != ']'){
 		char *blobsum;
 		int bi;
@@ -204,7 +244,14 @@ main(int argc, char *argv[])
 		FILE *fp;
 
 		memset(&blobcnk, 0, sizeof blobcnk);
-		fp = fopen(blobsum, "wb");
+
+		char *blobfile;
+		blobfile = smprintf("%02d_%s_%s_%s.tar.gz", blobno, blobsum, image, tag);
+		defrog(blobfile);
+		printf("%s\n", blobfile);
+		fp = fopen(blobfile, "wb");
+		free(blobfile);
+
 		bloburl = smprintf("https://registry.hub.docker.com/v2/%s/blobs/%s", image, blobsum);
 		blobcnk.fp = fp;
 		curl_easy_setopt(curl, CURLOPT_URL, bloburl);
@@ -223,8 +270,8 @@ main(int argc, char *argv[])
 		free(bloburl);
 		free(blobsum);
 
-		printf("blobsum: %s\n", blobsum);
 		off = ast[off].next;
+		blobno++;
 	}
 
 
