@@ -86,7 +86,7 @@ static char *
 portname(Port *port)
 {
 	static __thread char buf[128];
-	snprintf(buf, sizeof buf, "%s:%s", port->id, port->ifname);
+	snprintf(buf, sizeof buf, "%s-%s", port->id, port->ifname);
 	return buf;
 }
 
@@ -350,22 +350,33 @@ writer(void *aport)
 	return port;
 }
 
+typedef struct Ctrlconn Ctrlconn;
+struct Ctrlconn {
+	pthread_t thr;
+	int fd;
+};
 
 static void *
-acceptor(void *dsockp)
+ctrlhandler(void *actrl)
 {
+	Ctrlconn *ctrl;
 	JsonRoot jsroot;
 	char buf[256];
-	int fd, newfd, dsock = *(int*)dsockp;
+	int fd, newfd;
 	int i, nrd;
+
+	ctrl = (Ctrlconn *)actrl;
+	fd = ctrl->fd;
 
 	memset(&jsroot, 0, sizeof jsroot);
 	for(;;){
-		if((fd = accept(dsock, NULL, NULL)) == -1){
-			fprintf(stderr, "accept: %s\n", strerror(errno));
-			continue;
-		}
 		nrd = recvfd(fd, &newfd, buf, sizeof buf-1);
+		if(nrd == -1){
+			fprintf(stderr, "recvfd: %s\n", strerror(errno));
+			break;
+		}
+		if(nrd == 0)
+			break;
 		if(nrd > 0){
 			int addi, remi;
 
@@ -434,7 +445,7 @@ acceptor(void *dsockp)
 				pthread_create(&port->xmitthr, NULL, writer, port);
 				__sync_fetch_and_add(&nports, 1);
 			}
-add_done:
+	add_done:
 			remi = jsonwalk(&jsroot, 0, "remove");
 			if(remi != -1){
 				char *id;
@@ -458,7 +469,27 @@ add_done:
 					fprintf(stderr, "acceptor: removing %s: not found or already closed\n", id);
 			}
 		}
-		close(fd);
+	}
+	close(fd);
+	free(ctrl);
+	return NULL;
+}
+
+static void *
+acceptor(void *dsockp)
+{
+	Ctrlconn *ctrl;
+	int fd, dsock;
+
+	dsock = *(int*)dsockp;
+	for(;;){
+		if((fd = accept(dsock, NULL, NULL)) == -1){
+			fprintf(stderr, "accept: %s\n", strerror(errno));
+			continue;
+		}
+		ctrl = malloc(sizeof ctrl[0]);
+		ctrl->fd = fd;
+		pthread_create(&ctrl->thr, NULL, ctrlhandler, ctrl);
 	}
 
 	return NULL;
