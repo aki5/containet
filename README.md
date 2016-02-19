@@ -2,6 +2,7 @@
 # Containet
 
 [![Build Status](https://travis-ci.org/aki5/containet.svg?branch=master)](https://travis-ci.org/aki5/containet)
+[![Coverity Scan Build Status](https://scan.coverity.com/projects/7971/badge.svg)](https://scan.coverity.com/projects/containet)
 
 This repository is an attempt at creating clean environment for cluster
 computing, in a way this is an attempt to make the network addressing not
