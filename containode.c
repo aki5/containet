@@ -77,6 +77,9 @@ static struct {
 static char childstack[16384];
 static char buf[8192];
 
+static char *identity;
+static char *swtchname;
+
 static void
 detachbut(char *path)
 {
@@ -223,11 +226,7 @@ enterchild(void *arg){
 	exit(1);
 }
 
-char *identity;
-char *swtchname;
-
-
-void
+static void
 die(int sig)
 {
 	int dsock;
@@ -260,7 +259,7 @@ static char *base62 =
 	"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 	"0123456789";
 
-char *
+static char *
 idstr(uint64_t id)
 {
 
@@ -276,7 +275,7 @@ idstr(uint64_t id)
 	return str;
 }
 
-uint64_t
+static uint64_t
 strid(char *str)
 {
 	uint64_t id;

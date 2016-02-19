@@ -121,7 +121,7 @@ main(int argc, char *argv[])
 	authurl = smprintf("https://auth.docker.io/token?service=registry.docker.io&scope=repository:%s:pull", image);
 	curl_easy_setopt(curl, CURLOPT_URL, authurl);
 	//curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
-	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, cnkbwrite);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, (void*)cnkbwrite);
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &cnk);
 	res = curl_easy_perform(curl);
 	if(res != CURLE_OK){
@@ -208,10 +208,10 @@ main(int argc, char *argv[])
 		bloburl = smprintf("https://registry.hub.docker.com/v2/%s/blobs/%s", image, blobsum);
 		blobcnk.fp = fp;
 		curl_easy_setopt(curl, CURLOPT_URL, bloburl);
-		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, cnkfwrite);
+		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, (void*)cnkfwrite);
 		curl_easy_setopt(curl, CURLOPT_WRITEDATA, &blobcnk);
 		curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-		curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, cnkheader);
+		curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, (void*)cnkheader);
 		curl_easy_setopt(curl, CURLOPT_HEADERDATA, &blobcnk);
 
 		res = curl_easy_perform(curl);

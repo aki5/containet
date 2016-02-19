@@ -34,6 +34,8 @@
 #include <linux/filter.h>
 #include <linux/seccomp.h>
 
+#include "seccomp.h"
+
 #define nelem(x) (int)(sizeof(x)/sizeof(x[0]))
 
 static struct sock_filter filter[] = {

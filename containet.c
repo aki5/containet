@@ -75,12 +75,12 @@ struct Port {
 };
 
 
-Cam g_cams[Camsize];
-Port ports[MaxPorts];
+static Cam g_cams[Camsize];
+static Port ports[MaxPorts];
 
-int aports = nelem(ports);
-int nports;
-pthread_t agethr;
+static int aports = nelem(ports);
+static int nports;
+static pthread_t agethr;
 
 static char *
 portname(Port *port)

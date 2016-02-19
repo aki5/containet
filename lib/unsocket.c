@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <errno.h>
 #include <string.h>
+#include "unsocket.h"
 
 int
 unsocket(int socktype, char *srcpath, char *dstpath)
