@@ -152,7 +152,8 @@ enterchild(void *arg){
 
 		// read response
 		buf = malloc(256);
-		read(ap->ctrlsock, buf, 256);
+		if(read(ap->ctrlsock, buf, 256) == -1)
+			fprintf(stderr, "failed to read response: %s\n", strerror(errno));
 		free(buf);
 
 	}
@@ -263,7 +264,8 @@ enterchild(void *arg){
 
 		// read response
 		buf = malloc(256);
-		read(ap->ctrlsock, buf, 256);
+		if(read(ap->ctrlsock, buf, 256) == -1)
+			fprintf(stderr, "failed to read response: %s\n", strerror(errno));
 		free(buf);
 
 		close(postfd);

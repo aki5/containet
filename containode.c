@@ -64,7 +64,8 @@ die(int sig)
 
 		// read response
 		buf = malloc(256);
-		read(ctrlsock, buf, 256);
+		if(read(ctrlsock, buf, 256) == -1)
+			fprintf(stderr, "failed to read response: %s\n", strerror(errno));
 		free(buf);
 
 		close(ctrlsock);

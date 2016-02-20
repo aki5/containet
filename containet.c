@@ -260,7 +260,8 @@ agecam(void *aux)
 			port = ports + i;
 			if(__sync_bool_compare_and_swap(&port->state, PortClosing, PortCloseWait)){
 				// this close takes a long time because it tears down a network namespace.
-				close(port->fd);
+				if(port->fd >= 0)
+					close(port->fd);
 				port->fd = -1;
 				pthread_kill(port->xmitthr, SIGHUP);
 				pthread_kill(port->recvthr, SIGHUP);
