@@ -61,6 +61,12 @@ die(int sig)
 			fprintf(stderr, "failed to send: '%s' to switch: %s\n", buf, strerror(errno));
 		}
 		free(buf);
+
+		// read response
+		buf = malloc(256);
+		read(ctrlsock, buf, 256);
+		free(buf);
+
 		close(ctrlsock);
 	}
 	exit(sig);

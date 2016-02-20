@@ -147,8 +147,14 @@ enterchild(void *arg){
 		);
 		if(sendfd(ap->ctrlsock, tunfd, buf, strlen(buf)) == -1)
 			fprintf(stderr, "sendfd fail\n");
-		free(buf);
 		close(tunfd);
+		free(buf);
+
+		// read response
+		buf = malloc(256);
+		read(ap->ctrlsock, buf, 256);
+		free(buf);
+
 	}
 
 	/*
@@ -254,6 +260,12 @@ enterchild(void *arg){
 		if(sendfd(ap->ctrlsock, postfd, buf, strlen(buf)) == -1)
 			fprintf(stderr, "sendfd fail\n");
 		free(buf);
+
+		// read response
+		buf = malloc(256);
+		read(ap->ctrlsock, buf, 256);
+		free(buf);
+
 		close(postfd);
 	}
 

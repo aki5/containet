@@ -24,6 +24,8 @@
 #include "unsocket.h"
 #include "json.h"
 
+#define json(...) #__VA_ARGS__
+
 enum {
 	MaxPorts = 1024,
 	Nbuffers = 32,
@@ -34,6 +36,13 @@ enum {
 
 	AgeInterval = 10, // seconds
 	MaxAge = 2, // maximum age of a cam entry (# of AgeIntervals)
+};
+
+enum {
+	PortOpen = 0,
+	PortClosing = 1,
+	PortCloseWait = 2,
+	PortClosed = 3,
 };
 
 typedef struct Buffer Buffer;
@@ -70,7 +79,7 @@ struct Port {
 	char *ifname;
 	char *nodeid;
 	int fd;
-	int closed;
+	int state;
 	Queue freeq;
 	Queue xmitq;
 };
@@ -100,7 +109,7 @@ qget(Queue *q)
 
 	bp = NULL;
 	pthread_mutex_lock(&q->lock);
-	while(q->port->closed == 0 && q->head == q->tail)
+	while(q->port->state == PortOpen && q->head == q->tail)
 		pthread_cond_wait(&q->kick, &q->lock);
 	if(q->head != q->tail){
 		qtail = q->tail;
@@ -130,14 +139,6 @@ qput(Queue *q, Buffer *bp)
 	pthread_mutex_unlock(&q->lock);
 
 	return -1;
-}
-
-static void
-qkick(Queue *q)
-{
-	pthread_mutex_lock(&q->lock);
-	pthread_cond_signal(&q->kick);
-	pthread_mutex_unlock(&q->lock);
 }
 
 static int
@@ -248,7 +249,7 @@ agecam(void *aux)
 		for(i = 0; i < Camsize; i++){
 			cam = g_cams + i;
 			age = __sync_fetch_and_add(&cam->age, 1) + 1;
-			if(cam->port != NULL && (age >= MaxAge || cam->port->closed != 0)){
+			if(cam->port != NULL && (age >= MaxAge || cam->port->state != PortOpen)){
 				fprintf(stderr, "%s: aged cam entry\n", portname(cam->port));
 				cam->port = NULL;
 				copymac(cam->mac, zeromac);
@@ -257,15 +258,16 @@ agecam(void *aux)
 		for(i = 0; i < nports; i++){
 			Port *port;
 			port = ports + i;
-			if(__sync_bool_compare_and_swap(&port->closed, 1, 2)){
+			if(__sync_bool_compare_and_swap(&port->state, PortClosing, PortCloseWait)){
 				// this close takes a long time because it tears down a network namespace.
 				close(port->fd);
+				port->fd = -1;
 				pthread_kill(port->xmitthr, SIGHUP);
 				pthread_kill(port->recvthr, SIGHUP);
 				pthread_join(port->xmitthr, NULL);
 				pthread_join(port->recvthr, NULL);
 				fprintf(stderr, "%s: closed fd\n", portname(ports+i));
-				__sync_fetch_and_add(&port->closed, 1);
+				__sync_bool_compare_and_swap(&port->state, PortCloseWait, PortClosed);
 			}
 		}
 		sleep(AgeInterval);
@@ -288,8 +290,10 @@ reader(void *aport)
 		bp = qget(&port->freeq);
 
 		nrd = read(port->fd, bp->buf, bp->cap);
-		if(port->closed)
+		if(port->state != PortOpen){
+			qput(bp->freeq, bp);
 			break;
+		}
 		bp->len = nrd;
 
 		dstmac = (uint8_t *)bp->buf + 4;
@@ -329,10 +333,7 @@ reader(void *aport)
 		if(nref == 0)
 			qput(bp->freeq, bp);
 	}
-
 	fprintf(stderr, "%s: reader exiting..\n", portname(port));
-	qkick(&port->xmitq);
-
 	return port;
 }
 
@@ -407,14 +408,14 @@ ctrlhandler(void *actrl)
 				if(ifnamei == -1){
 					fprintf(stderr, "acceptor: add request without ifname\n");
 					close(newfd);
-					continue;
+					goto respond_err;
 				}
 
 				nodeidi = jsonwalk(&jsroot, obji, "nodeid");
 				if(nodeidi == -1){
 					fprintf(stderr, "acceptor: add request without nodeid\n");
 					close(newfd);
-					continue;
+					goto respond_err;
 				}
 
 				ifname = jsoncstr(&jsroot, ifnamei);
@@ -423,7 +424,7 @@ ctrlhandler(void *actrl)
 				pthread_mutex_lock(&portlock);
 				for(i = 0; i < nports; i++){
 					port = ports + i;
-					if(__sync_bool_compare_and_swap(&port->closed, 3, 0)){
+					if(__sync_bool_compare_and_swap(&port->state, PortClosed, PortOpen)){
 						free(port->nodeid);
 						free(port->ifname);
 						port->ifname = ifname;
@@ -432,21 +433,26 @@ ctrlhandler(void *actrl)
 						pthread_create(&port->recvthr, NULL, reader, port);
 						pthread_create(&port->xmitthr, NULL, writer, port);
 						pthread_mutex_unlock(&portlock);
-						goto add_done;
+						break;
 					}
 				}
+				if(i < nports)
+					goto respond_ok;
 
 				if(nports == aports){
 					fprintf(stderr, "out of ports\n");
 					close(newfd);
 					pthread_mutex_unlock(&portlock);
-					continue;
+					free(ifname);
+					free(nodeid);
+					goto respond_err;
 				}
 
 				port = ports + nports;
 				memset(port, 0, sizeof port[0]);
 				pthread_mutex_init(&port->xmitq.lock, NULL);
 				pthread_mutex_init(&port->freeq.lock, NULL);
+				port->state = PortOpen;
 				port->xmitq.port = port;
 				port->freeq.port = port;
 				port->ifname = ifname;
@@ -467,33 +473,36 @@ ctrlhandler(void *actrl)
 				pthread_create(&port->xmitthr, NULL, writer, port);
 				__sync_fetch_and_add(&nports, 1);
 				pthread_mutex_unlock(&portlock);
+				goto respond_ok;
 			}
-	add_done:
+
 			obji = jsonwalk(&jsroot, 0, "remove-etherfd");
 			if(obji != -1){
 				char *nodeid;
-				int nclosed, nfound, nodeidi;
+				int ncloses, nfound, nodeidi;
 
 				nodeidi = jsonwalk(&jsroot, obji, "nodeid");
 				if(nodeidi == -1){
 					fprintf(stderr, "acceptor: remove request without nodeid\n");
-					continue;
+					goto respond_err;
 				}
 				nodeid = jsoncstr(&jsroot, nodeidi);
-				nclosed = 0;
+				ncloses = 0;
 				nfound = 0;
 				for(i = 0; i < nports; i++){
 					Port *port = ports + i;
 					if(!strcmp(nodeid, port->nodeid)){
-						if(__sync_bool_compare_and_swap(&port->closed, 0, 1))
-							nclosed++;
+						if(__sync_bool_compare_and_swap(&port->state, PortOpen, PortClosing))
+							ncloses++;
 						nfound++;
 					}
 				}
 				if(nfound == 0)
 					fprintf(stderr, "acceptor: remove-etherfd %s: not found\n", nodeid);
-				else if(nclosed == 0)
-					fprintf(stderr, "acceptor: remove-etherfd %s: already closed\n", nodeid);
+				else if(ncloses == 0)
+					fprintf(stderr, "acceptor: remove-etherfd %s: already state\n", nodeid);
+				free(nodeid);
+				goto respond_ok;
 			}
 
 			obji = jsonwalk(&jsroot, 0, "add-ctrlsock");
@@ -503,13 +512,13 @@ ctrlhandler(void *actrl)
 
 				if(newfd == -1){
 					fprintf(stderr, "acceptor: add-ctrlsock without fd\n");
-					continue;
+					goto respond_err;
 				}
 				nodeidi = jsonwalk(&jsroot, obji, "nodeid");
 				if(nodeidi == -1){
 					fprintf(stderr, "acceptor: add-ctrlsock request without nodeid\n");
 					close(newfd);
-					continue;
+					goto respond_err;
 				}
 				nodeid = jsoncstr(&jsroot, nodeidi);
 				fprintf(stderr, "creating acceptor for %s\n", nodeid);
@@ -517,14 +526,23 @@ ctrlhandler(void *actrl)
 				if(listen(newfd, 5) == -1){
 					fprintf(stderr, "%s: listen: %s\n", nodeid, strerror(errno));
 					close(newfd);
-					continue;
+					goto respond_err;
 				}
 
 				Ctrlconn *nctrl;
 				nctrl = malloc(sizeof nctrl[0]);
 				nctrl->fd = newfd;
 				pthread_create(&nctrl->thr, NULL, acceptor, nctrl);
+				goto respond_ok;
 			}
+			char msg[256];
+respond_ok:
+			snprintf(msg, sizeof msg, json({}));
+			write(fd, msg, strlen(msg));
+			continue;
+respond_err:
+			snprintf(msg, sizeof msg, json({"error":"error"}));
+			write(fd, msg, strlen(msg));
 		}
 	}
 	close(fd);
