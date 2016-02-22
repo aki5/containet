@@ -2,6 +2,7 @@ typedef struct Args Args;
 struct Args {
 	int argc;
 	char **argv;
+	char **environ;
 	char *root;
 	char *toproot;
 	char *topwork;
@@ -9,6 +10,7 @@ struct Args {
 	char *identity;
 	int ctrlsock; // domain socket to switch
 	char *postname;
+	char *authtoken;
 };
 
 

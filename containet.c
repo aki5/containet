@@ -23,6 +23,7 @@
 #include <pthread.h>
 #include "unsocket.h"
 #include "json.h"
+#include "auth.h"
 
 #define json(...) #__VA_ARGS__
 
@@ -367,6 +368,7 @@ writer(void *aport)
 
 typedef struct Ctrlconn Ctrlconn;
 struct Ctrlconn {
+	Auth auth;
 	pthread_t thr;
 	int fd;
 };
@@ -376,6 +378,7 @@ static void *acceptor(void *dsockp);
 static void *
 ctrlhandler(void *actrl)
 {
+	Auth *auth;
 	Ctrlconn *ctrl;
 	JsonRoot jsroot;
 	char buf[256];
@@ -384,20 +387,41 @@ ctrlhandler(void *actrl)
 
 	ctrl = (Ctrlconn *)actrl;
 	fd = ctrl->fd;
+	auth = &ctrl->auth;
 
 	memset(&jsroot, 0, sizeof jsroot);
 	for(;;){
+		char *token;
+
+		token = NULL;
+		memset(buf, 0, sizeof buf);
 		nrd = recvfd(fd, &newfd, buf, sizeof buf-1);
 		if(nrd == -1){
 			fprintf(stderr, "recvfd: %s\n", strerror(errno));
 			break;
 		}
+		fprintf(stderr, "ctrl message: '%s'\n", buf);
 		if(nrd == 0)
 			break;
 		if(nrd > 0){
-			int obji;
+			int obji, tokeni;
 
 			jsonparse(&jsroot, buf, nrd);
+
+			tokeni = jsonwalk(&jsroot, 0, "authtoken");
+			if(tokeni == -1){
+				fprintf(stderr, "acceptor: no authtoken in request\n");
+				goto respond_err;
+			}
+			token = jsoncstr(&jsroot, tokeni);
+			if(token == NULL){
+				fprintf(stderr, "acceptor: authtoken is not a string\n");
+				goto respond_err;
+			}
+			if(validtoken(auth, token) != 1){
+				fprintf(stderr, "acceptor: invalid authtoken\n");
+				goto respond_err;
+			}
 
 			obji = jsonwalk(&jsroot, 0, "add-etherfd");
 			if(obji != -1 && newfd != -1){
@@ -408,14 +432,12 @@ ctrlhandler(void *actrl)
 				ifnamei = jsonwalk(&jsroot, obji, "ifname");
 				if(ifnamei == -1){
 					fprintf(stderr, "acceptor: add request without ifname\n");
-					close(newfd);
 					goto respond_err;
 				}
 
 				nodeidi = jsonwalk(&jsroot, obji, "nodeid");
 				if(nodeidi == -1){
 					fprintf(stderr, "acceptor: add request without nodeid\n");
-					close(newfd);
 					goto respond_err;
 				}
 
@@ -442,7 +464,6 @@ ctrlhandler(void *actrl)
 
 				if(nports == aports){
 					fprintf(stderr, "out of ports\n");
-					close(newfd);
 					pthread_mutex_unlock(&portlock);
 					free(ifname);
 					free(nodeid);
@@ -518,7 +539,6 @@ ctrlhandler(void *actrl)
 				nodeidi = jsonwalk(&jsroot, obji, "nodeid");
 				if(nodeidi == -1){
 					fprintf(stderr, "acceptor: add-ctrlsock request without nodeid\n");
-					close(newfd);
 					goto respond_err;
 				}
 				nodeid = jsoncstr(&jsroot, nodeidi);
@@ -526,22 +546,28 @@ ctrlhandler(void *actrl)
 
 				if(listen(newfd, 5) == -1){
 					fprintf(stderr, "%s: listen: %s\n", nodeid, strerror(errno));
-					close(newfd);
 					goto respond_err;
 				}
 
 				Ctrlconn *nctrl;
 				nctrl = malloc(sizeof nctrl[0]);
+				memset(nctrl, 0, sizeof nctrl[0]);
 				nctrl->fd = newfd;
 				pthread_create(&nctrl->thr, NULL, acceptor, nctrl);
 				goto respond_ok;
 			}
 			char msg[256];
 respond_ok:
+			if(token != NULL)
+				free(token);
 			snprintf(msg, sizeof msg, json({}));
 			write(fd, msg, strlen(msg));
 			continue;
 respond_err:
+			if(token != NULL)
+				free(token);
+			if(newfd != -1)
+				close(newfd);
 			snprintf(msg, sizeof msg, json({"error":"error"}));
 			write(fd, msg, strlen(msg));
 		}
@@ -565,6 +591,7 @@ acceptor(void *actrl)
 			continue;
 		}
 		nctrl = malloc(sizeof nctrl[0]);
+		memset(nctrl, 0, sizeof nctrl[0]);
 		nctrl->fd = fd;
 		pthread_create(&nctrl->thr, NULL, ctrlhandler, nctrl);
 	}
@@ -627,6 +654,7 @@ main(int argc, char *argv[])
 
 	Ctrlconn *nctrl;
 	nctrl = malloc(sizeof nctrl[0]);
+	memset(nctrl, 0, sizeof nctrl[0]);
 	nctrl->fd = dsock;
 	acceptor((void*)nctrl);
 

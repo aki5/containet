@@ -19,31 +19,10 @@
  *	OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  *	THE SOFTWARE.
  */
-#define _GNU_SOURCE
-#include <stdio.h>
-#include <stdlib.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <sys/wait.h>
-#include <unistd.h>
-#include <sched.h>
-#include <errno.h>
-#include <string.h>
-#include <sys/ioctl.h>
-#include <sys/mount.h>
-#include <stdint.h>
-#include <stddef.h>
+#include "auth.h"
 
-#include <sys/socket.h>
-#include <linux/ioctl.h>
-#include <linux/if_tun.h>
-#include <linux/if.h>
-#include <linux/sockios.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-
-
-
-#define stackalign(x) (void*)((uintptr_t)(x) & ~(uintptr_t)0xf)
-#define nelem(x) (int)(sizeof(x)/sizeof(x[0]))
+int
+validtoken(Auth *auth, char *token)
+{
+	return 1;
+}

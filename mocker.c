@@ -27,6 +27,9 @@
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
 #include <curl/curl.h>
 #include "json.h"
 #include "smprintf.h"
@@ -111,6 +114,21 @@ main(int argc, char *argv[])
 	char *tag;
 	int opt;
 
+	if(argc < 2){
+topusage:
+		fprintf(stderr, "usage:\n");
+		fprintf(stderr, "	%s pull [-x extract-to] docker-vendor/image-name\n", argv[0]);
+		fprintf(stderr, "	%s run docker-vendor/image-name\n", argv[0]);
+		exit(1);
+	}
+
+	if(!strcmp(argv[1], "pull")){
+		argc--;
+		argv++;
+	} else {
+		goto topusage;
+	}
+
 	while((opt = getopt(argc, argv, "xC:")) != -1) {
 		switch(opt){
 		case 'x':
@@ -123,14 +141,14 @@ main(int argc, char *argv[])
 			}
 			break;
 		default:
-		caseusage:
-			fprintf(stderr, "usage: %s [-x extract-to] docker-vendor/image-name\n", argv[0]);
+		pullusage:
+			fprintf(stderr, "usage: %s pull [-x extract-to] docker-vendor/image-name\n", argv[0]);
 			exit(1);
 		}
 	}
 
 	if(optind >= argc)
-		goto caseusage;
+		goto pullusage;
 
 	if(strchr(argv[optind], '/') != NULL){
 		image = argv[optind];
@@ -243,15 +261,39 @@ main(int argc, char *argv[])
 		Chunk blobcnk;
 		char *bloburl;
 		FILE *fp;
+		int pid;
 
 		memset(&blobcnk, 0, sizeof blobcnk);
 
-		char *blobfile;
-		blobfile = smprintf("%02d_%s_%s_%s.tar.gz", blobno, blobsum, image, tag);
-		defrog(blobfile);
-		printf("%s\n", blobfile);
-		fp = fopen(blobfile, "wb");
-		free(blobfile);
+		if(xflag){
+			int tube[2];
+
+			pipe(tube);
+			switch(pid = fork()){
+			case 0:
+				close(tube[1]);
+				dup2(tube[0], 0);
+				defrog(image);
+				if(blobno == 0 && mkdir(image, 0777) == -1){
+					fprintf(stderr, "mocker: mkdir %s: %s\n", image, strerror(errno));
+					exit(1);
+				}
+				execve("/bin/tar", (char*[]){"tar", "-C", image, "-zxvf", "-", NULL}, NULL);
+				exit(1);
+			default:
+				close(tube[0]);
+				fp = fdopen(tube[1], "wb");
+			}
+		} else {
+			char *blobfile;
+
+			pid = -1;
+			blobfile = smprintf("%02d_%s_%s_%s.tar.gz", blobno, blobsum, image, tag);
+			defrog(blobfile);
+			printf("%s\n", blobfile);
+			fp = fopen(blobfile, "wb");
+			free(blobfile);
+		}
 
 		bloburl = smprintf("https://registry.hub.docker.com/v2/%s/blobs/%s", image, blobsum);
 		blobcnk.fp = fp;
@@ -270,6 +312,17 @@ main(int argc, char *argv[])
 			exit(1);
 		}
 		fclose(fp);
+		if(pid != -1){
+			int status;
+			if(waitpid(pid, &status, 0) == -1){
+				fprintf(stderr, "waitpid: tar: %s\n", strerror(errno));
+				exit(1);
+			}
+			if(!WIFEXITED(status) || WEXITSTATUS(status) != 0){
+				fprintf(stderr, "waitpid: tar: did not exit normally: status %d\n", status);
+				exit(1);
+			}
+		}
 		free(bloburl);
 		free(blobsum);
 

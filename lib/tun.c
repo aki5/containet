@@ -58,13 +58,6 @@ ifconfig(char *devname, char *addr)
 	cfgfd = -1;
 	memset(&ifr, 0, sizeof ifr);
 
-	strncpy(addrbuf, addr, sizeof addrbuf);
-	addrbuf[sizeof addrbuf-1] = '\0';
-	if((p = strchr(addrbuf, '/')) != NULL){
-		*p = '\0';
-		maskbits = strtol(p+1, NULL, 10);
-
-	}
 
 	if((cfgfd = socket(PF_INET, SOCK_DGRAM, IPPROTO_IP)) == -1){
 		fprintf(stderr, "socket SOCK_DGRAM: %s\n", strerror(errno));
@@ -73,31 +66,39 @@ ifconfig(char *devname, char *addr)
 
 	strncpy(ifr.ifr_name, devname, sizeof ifr.ifr_name-1);
 
-	ifr.ifr_addr.sa_family = AF_INET;
-	addrp = (struct sockaddr_in *)&ifr.ifr_addr;
-	if(inet_pton(AF_INET, addrbuf, &addrp->sin_addr) == -1){
-		fprintf(stderr, "inet_aton %s: %s\n", addr, strerror(errno));
-		goto error_out;
-	}
-	if(ioctl(cfgfd, SIOCSIFADDR, (void *)&ifr) == -1){
-		fprintf(stderr, "ioctl SIOCSIFADDR %s: %s\n", ifr.ifr_name, strerror(errno));
-		goto error_out;
+	if(addr != NULL){
+		strncpy(addrbuf, addr, sizeof addrbuf);
+		addrbuf[sizeof addrbuf-1] = '\0';
+		if((p = strchr(addrbuf, '/')) != NULL){
+			*p = '\0';
+			maskbits = strtol(p+1, NULL, 10);
+		}
+		ifr.ifr_addr.sa_family = AF_INET;
+		addrp = (struct sockaddr_in *)&ifr.ifr_addr;
+		if(inet_pton(AF_INET, addrbuf, &addrp->sin_addr) == -1){
+			fprintf(stderr, "inet_aton %s: %s\n", addr, strerror(errno));
+			goto error_out;
+		}
+		if(ioctl(cfgfd, SIOCSIFADDR, (void *)&ifr) == -1){
+			fprintf(stderr, "ioctl SIOCSIFADDR %s: %s\n", ifr.ifr_name, strerror(errno));
+			goto error_out;
+		}
+
+		if(maskbits != -1){
+			ifr.ifr_netmask.sa_family = AF_INET;
+			addrp = (struct sockaddr_in *)&ifr.ifr_netmask;
+			addrp->sin_addr.s_addr = htonl(~(0xfffffffful >> maskbits));
+			if(ioctl(cfgfd, SIOCSIFNETMASK, (void *)&ifr) == -1){
+				fprintf(stderr, "ioctl SIOCGIFNETMASK %s: %s\n", ifr.ifr_name, strerror(errno));
+				goto error_out;
+			}
+		}
 	}
 
 	ifr.ifr_mtu = 64000;
 	if(ioctl(cfgfd, SIOCSIFMTU, &ifr) == -1){
 		fprintf(stderr, "ioctl SIOCSIFMTU %s: %s\n", ifr.ifr_name, strerror(errno));
 		goto error_out;
-	}
-
-	if(maskbits != -1){
-		ifr.ifr_netmask.sa_family = AF_INET;
-		addrp = (struct sockaddr_in *)&ifr.ifr_netmask;
-		addrp->sin_addr.s_addr = htonl(~(0xfffffffful >> maskbits));
-		if(ioctl(cfgfd, SIOCSIFNETMASK, (void *)&ifr) == -1){
-			fprintf(stderr, "ioctl SIOCGIFNETMASK %s: %s\n", ifr.ifr_name, strerror(errno));
-			goto error_out;
-		}
 	}
 
 	ifr.ifr_flags = IFF_UP|IFF_BROADCAST|IFF_RUNNING; //|MULTICAST 

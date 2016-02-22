@@ -33,6 +33,7 @@
 // not sure this is in the standard, but it is too handy for json templating to ignore.
 #define json(...) #__VA_ARGS__
 
+static char *authtoken;
 static char *swtchname;
 static char *identity;
 
@@ -50,10 +51,12 @@ die(int sig)
 		int len;
 		buf = smprintf(
 			json({
+				"authtoken": "%s",
 				"remove-etherfd":{
 					"nodeid":"%s"
 				}
 			}),
+			authtoken,
 			identity
 		);
 		len = strlen(buf);
@@ -129,6 +132,7 @@ main(int argc, char *argv[])
 	int opt, pid, status;
 	int ctrlsock;
 	int cloneflags;
+	int Cflag;
 
 	root = NULL;
 	toproot = NULL;
@@ -136,6 +140,7 @@ main(int argc, char *argv[])
 	ip4addr = NULL;
 	postname = NULL;
 	ctrlsock = -1;
+	Cflag = 0;
 
 	cloneflags =
 		SIGCHLD |	// new process
@@ -145,7 +150,7 @@ main(int argc, char *argv[])
 		CLONE_NEWIPC|	// new sysvipc name space
 		CLONE_NEWNET;	// new network namespace
 
-	while((opt = getopt(argc, argv, "r:t:w:4:s:i:NIp:")) != -1) {
+	while((opt = getopt(argc, argv, "r:t:w:4:s:i:NIp:a:")) != -1) {
 		switch(opt){
 		case 's':
 			swtchname = optarg;
@@ -178,9 +183,25 @@ main(int argc, char *argv[])
 		case 'I':
 			cloneflags &= ~CLONE_NEWIPC;
 			break;
+		case 'C':
+			Cflag++;
+			break;
+		case 'a':
+			authtoken = optarg;
+			break;
 		default:
-			fprintf(stderr, "usage: %s [-i identity] [-r path/to/root] [-t path/to/top-dir] [-w path/to/work-dir] [-4 ip4 address] [-s path/to/switch-sock] [-p where/to/post/ctrl-sock] [-I] [-N]\n", argv[0]);
+			fprintf(stderr, "usage: %s [-a authtoken] [-i identity] [-r path/to/root] [-t path/to/top-dir] [-w path/to/work-dir] [-4 ip4 address] [-s path/to/switch-sock] [-p where/to/post/ctrl-sock] [-I] [-N] [-C]\n", argv[0]);
 			exit(1);
+		}
+	}
+
+	// if toproot specified and is of root.foobar format, take the part after '.' as identity.
+	if(identity == NULL && root != NULL && toproot != NULL){
+		identity = strchr(toproot, '.');
+		if(identity != NULL && (identity-toproot == (ptrdiff_t)strlen(root)) && !memcmp(toproot, root, identity-toproot)){
+			identity++;
+		} else {
+			identity = NULL;
 		}
 	}
 
@@ -204,6 +225,14 @@ main(int argc, char *argv[])
 		close(rndfd);
 	}
 
+	if(Cflag == 0 && root != NULL && toproot == NULL){
+		toproot = smprintf("%s.%s", root, identity);
+	}
+
+	// hack..
+	if(authtoken == NULL)
+		authtoken = identity;
+
 	// gives a perf kick for namespace creation and teardown.
 	// having iptables around at all is a major time suck too, but we can't fix that here.
 	writefile("/sys/kernel/rcu_expedited", "1", 1);
@@ -211,13 +240,15 @@ main(int argc, char *argv[])
 	args = (Args){
 		.argc = argc-optind,
 		.argv = argv+optind,
+		.environ = NULL,
 		.root = root,
 		.toproot = toproot,
 		.topwork = topwork,
 		.ip4addr = ip4addr,
 		.identity = identity,
 		.ctrlsock = ctrlsock,
-		.postname = postname
+		.postname = postname,
+		.authtoken = authtoken,
 	};
 
 	pid = runcontainer(&args, cloneflags);

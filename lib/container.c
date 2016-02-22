@@ -57,6 +57,14 @@
 // not sure this is in the standard, but it is too handy for json templating to ignore.
 #define json(...) #__VA_ARGS__
 
+static struct {
+	char *path;
+	mode_t mode;
+} dirs[] = {
+// for opengl
+	{"/dev/dri", 0777},
+};
+
 
 static struct {
 	char *path;
@@ -71,6 +79,12 @@ static struct {
 	{"/dev/tty", S_IFCHR | 0666, 5, 0},
 	{"/dev/random", S_IFCHR | 0444, 1, 8},
 	{"/dev/urandom", S_IFCHR | 0444, 1, 9},
+
+// for opengl
+	{"/dev/dri/card0", S_IFCHR | 0660, 226, 0},
+// for nvidia..
+	{"/dev/nvidia0", S_IFCHR | 0660, 195, 0},
+	{"/dev/nvidiactl", S_IFCHR | 0660, 195, 255},
 };
 
 // manpages are out of date, /usr/include/sys/mount.h is a good resource
@@ -137,11 +151,13 @@ enterchild(void *arg){
 			exit(1);
 		buf = smprintf(
 			json({
+				"authtoken": "%s",
 				"add-etherfd":{
 					"ifname":"%s",
 					"nodeid":"%s"
 				}
 			}),
+			ap->authtoken,
 			ifname,
 			ap->identity
 		);
@@ -205,10 +221,30 @@ enterchild(void *arg){
 				fprintf(stderr, "pivot_root(\"%s\", \"%s\"): %s\n", ap->root, tmp, strerror(errno));
 				exit(1);
 			}
+
+			char *x11src;
+			char *x11dst;
+			x11src = "/mnt/tmp/.X11-unix";
+			x11dst = "/tmp/.X11-unix";
+			if(mkdir(x11dst, 0777) == -1 && errno != EEXIST){
+				fprintf(stderr, "mkdir %s: %s\n", x11dst, strerror(errno));
+				exit(1);
+			}
+			if(mount(x11src, x11dst, "", MS_BIND, NULL) == -1){
+				fprintf(stderr, "mount('%s', '%s', MS_BIND): %s\n", x11src, x11dst, strerror(errno));
+				exit(1);
+			}
+
+			if(symlink("/proc/mounts", "/etc/mtab") == -1 && errno != EEXIST){
+				fprintf(stderr, "symlink /etc/mtab -> /proc/mounts: %s\n", strerror(errno));
+				exit(1);
+			}
+
 			if(umount2("/mnt", MNT_DETACH) == -1){
 				fprintf(stderr, "umount %s: %s\n", "/mnt", strerror(errno));
 				exit(1);
 			}
+
 		} else {
 			detachbut("/");
 			if(chroot(ap->root) == -1){
@@ -227,8 +263,17 @@ enterchild(void *arg){
 			fprintf(stderr, "mkdir(\"%s\"): %s\n", mounts[i].to, strerror(errno));
 			exit(1);
 		}
-		if(mount(mounts[i].from, mounts[i].to, mounts[i].type, mounts[i].flags, NULL) == -1){
-			fprintf(stderr, "mount(\"%s\"): %s\n", mounts[i].to, strerror(errno));
+		if(strcmp(mounts[i].type, "mkdir") != 0){
+			if(mount(mounts[i].from, mounts[i].to, mounts[i].type, mounts[i].flags, NULL) == -1){
+				fprintf(stderr, "mount(\"%s\"): %s\n", mounts[i].to, strerror(errno));
+				exit(1);
+			}
+		}
+	}
+
+	for(i = 0; i < nelem(dirs); i++){
+		if(mkdir(dirs[i].path, dirs[i].mode) == -1 && errno != EEXIST){
+			fprintf(stderr, "mkdir(\"%s\"): %s\n", dirs[i].path, strerror(errno));
 			exit(1);
 		}
 	}
@@ -239,7 +284,6 @@ enterchild(void *arg){
 			exit(1);
 		}
 	}
-
 
 	if(ap->postname != NULL){
 		char *buf;
@@ -252,10 +296,12 @@ enterchild(void *arg){
 
 		buf = smprintf(
 			json({
+				"authtoken": "%s",
 				"add-ctrlsock":{
 					"nodeid":"%s"
 				}
 			}),
+			ap->authtoken,
 			ap->identity
 		);
 		if(sendfd(ap->ctrlsock, postfd, buf, strlen(buf)) == -1)
@@ -279,7 +325,7 @@ enterchild(void *arg){
 	// this part will have to wait until a lot later.
 	//seccomp();
 
-	execv(ap->argv[0], ap->argv);
+	execve(ap->argv[0], ap->argv, ap->environ);
 	fprintf(stderr, "exec(\"%s\"): %s\n", ap->argv[0], strerror(errno));
 	exit(1);
 }
