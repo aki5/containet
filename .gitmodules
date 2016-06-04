@@ -1,0 +1,3 @@
+[submodule "libjson5"]
+	path = libjson5
+	url = https://github.com/aki5/libjson5
