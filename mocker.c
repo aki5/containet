@@ -88,6 +88,12 @@ cnkfwrite(void *data, size_t elsize, size_t numel, void *acnk)
 }
 
 static void
+cnkfree(Chunk *cnk)
+{
+	free(cnk->buf);
+}
+
+static void
 defrog(char *str)
 {
 	for(;*str != '\0';str++){
@@ -151,7 +157,7 @@ topusage:
 		goto pullusage;
 
 	if(strchr(argv[optind], '/') != NULL){
-		image = argv[optind];
+		image = strdup(argv[optind]);
 	} else {
 		image = smprintf("library/%s", argv[optind]);
 	}
@@ -208,12 +214,12 @@ topusage:
 		exit(1);
 	}
 
-	struct curl_slist *hdrlist;
-	hdrlist = curl_slist_append(NULL, smprintf("Authorization: Bearer %s", token));
+	char *authorizationString = smprintf("Authorization: Bearer %s", token);
+	struct curl_slist *hdrlist = curl_slist_append(NULL, authorizationString);
+	free(authorizationString);
 	res = curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrlist);
 
-	char *manifesturl;
-	manifesturl = smprintf("https://registry.hub.docker.com/v2/%s/manifests/%s", image, tag);
+	char *manifesturl = smprintf("https://registry.hub.docker.com/v2/%s/manifests/%s", image, tag);
 	curl_easy_setopt(curl, CURLOPT_URL, manifesturl);
 	cnk.len = 0;
 	res = curl_easy_perform(curl);
@@ -333,6 +339,8 @@ topusage:
 
 	curl_easy_cleanup(curl);
 	curl_slist_free_all(hdrlist);
-
+	jsonfree(&root);
+	cnkfree(&cnk);
+	free(image);
 	return 0;
 }
