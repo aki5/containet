@@ -42,6 +42,8 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
+#include <sys/sysmacros.h> /* for makedev */
+
 #include <sys/syscall.h> /* For SYS_xxx definitions, pivot_root.. */
 
 #define stackalign(x) (void*)((uintptr_t)(x) & ~(uintptr_t)0xf)
@@ -222,10 +224,8 @@ enterchild(void *arg){
 				exit(1);
 			}
 
-			char *x11src;
-			char *x11dst;
-			x11src = "/mnt/tmp/.X11-unix";
-			x11dst = "/tmp/.X11-unix";
+			char *x11src = "/mnt/tmp/.X11-unix";
+			char *x11dst = "/tmp/.X11-unix";
 			if(mkdir(x11dst, 0777) == -1 && errno != EEXIST){
 				fprintf(stderr, "mkdir %s: %s\n", x11dst, strerror(errno));
 				exit(1);
@@ -271,6 +271,8 @@ enterchild(void *arg){
 		}
 	}
 
+	mode_t oldmask = umask(0);
+
 	for(i = 0; i < nelem(dirs); i++){
 		if(mkdir(dirs[i].path, dirs[i].mode) == -1 && errno != EEXIST){
 			fprintf(stderr, "mkdir(\"%s\"): %s\n", dirs[i].path, strerror(errno));
@@ -284,6 +286,8 @@ enterchild(void *arg){
 			exit(1);
 		}
 	}
+
+	umask(oldmask);
 
 	if(ap->postname != NULL){
 		char *buf;
