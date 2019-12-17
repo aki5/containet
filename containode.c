@@ -119,7 +119,6 @@ main(int argc, char *argv[])
 {
 	char *root = NULL;
 	char *toproot = NULL;
-	char *topwork = NULL;
 	char *ip4addr = NULL;
 	char *postname = NULL;
 	int ctrlsock = -1;
@@ -155,9 +154,6 @@ main(int argc, char *argv[])
 		case 't':
 			toproot = optarg;
 			break;
-		case 'w':
-			topwork = optarg;
-			break;
 		case 'i':
 			identity = optarg;
 			break;
@@ -174,7 +170,7 @@ main(int argc, char *argv[])
 			authtoken = optarg;
 			break;
 		default:
-			fprintf(stderr, "usage: %s [-a authtoken] [-i identity] [-r path/to/root] [-t path/to/top-dir] [-w path/to/work-dir] [-4 ip4 address] [-s path/to/switch-sock] [-p where/to/post/ctrl-sock] [-I] [-N] [-C]\n", argv[0]);
+			fprintf(stderr, "usage: %s [-a authtoken] [-i identity] [-r path/to/root] [-t path/to/top-dir] [-4 ip4 address] [-s path/to/switch-sock] [-p where/to/post/ctrl-sock] [-I] [-N] [-C]\n", argv[0]);
 			exit(1);
 		}
 	}
@@ -227,7 +223,6 @@ main(int argc, char *argv[])
 		.environ = NULL,
 		.root = root,
 		.toproot = toproot,
-		.topwork = topwork,
 		.ip4addr = ip4addr,
 		.identity = identity,
 		.ctrlsock = ctrlsock,
@@ -248,6 +243,8 @@ main(int argc, char *argv[])
 		fprintf(stderr, "error: child did not exit normally\n");
 		die(1);
 	}
+	cleancontainer(&args);
+	fprintf(stderr, "fs modifications saved to %s\n", args.toproot);
 	die(0);
 	return 0;
 }

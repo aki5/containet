@@ -41,6 +41,8 @@
 #include <linux/sockios.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <sys/mman.h>
+
 
 #include <sys/sysmacros.h> /* for makedev */
 
@@ -192,36 +194,45 @@ enterchild(void *arg){
 		 *	use chroot when neither is supplied
 		 */
 		if(ap->toproot != NULL){
-			char tmp[256];
+
 			if(mkdir(ap->toproot, 0777) == -1 && errno != EEXIST){
 				fprintf(stderr, "mkdir(\"%s\"): %s\n", ap->toproot, strerror(errno));
 				exit(1);
 			}
-			if(ap->topwork != NULL){
-				if(mkdir(ap->topwork, 0777) == -1 && errno != EEXIST){
-					fprintf(stderr, "mkdir(\"%s\"): %s\n", ap->topwork, strerror(errno));
+
+			{
+				char *root = smprintf("%s/root", ap->toproot);
+				if(mkdir(root, 0777) == -1 && errno != EEXIST){
+					fprintf(stderr, "mkdir(\"%s\"): %s\n", ap->toproot, strerror(errno));
 					exit(1);
 				}
-				snprintf(tmp, sizeof tmp,"lowerdir=%s,upperdir=%s,workdir=%s", ap->root, ap->toproot, ap->topwork);
-				if(mount("overlay", ap->root, "overlay", 0, tmp) == -1){
+				char *work = smprintf("%s/work", ap->toproot);
+				if(mkdir(work, 0777) == -1 && errno != EEXIST){
+					fprintf(stderr, "mkdir(\"%s\"): %s\n", ap->toproot, strerror(errno));
+					exit(1);
+				}
+				char *mountflags = smprintf("lowerdir=%s,upperdir=%s,workdir=%s", ap->root, root, work);
+				if(mount("overlay", ap->root, "overlay", 0, mountflags) == -1){
 					fprintf(stderr, "mount(\"%s\") overlay: %s\n", ap->root, strerror(errno));
 					exit(1);
 				}
-			} else {
-				snprintf(tmp, sizeof tmp,"br:%s:%s=ro", ap->toproot, ap->root);
-				if(mount("none", ap->root, "aufs", 0, tmp) == -1){
-					fprintf(stderr, "mount(\"%s\") aufs: %s\n", ap->root, strerror(errno));
+
+				free(root);
+				free(work);
+				free(mountflags);
+			}
+
+			{
+				char *mntdir = smprintf("%s/mnt", ap->root);
+				if(mkdir(mntdir, 0777) == -1 && errno != EEXIST){
+					fprintf(stderr, "mkdir(\"%s\"): %s\n", mntdir, strerror(errno));
 					exit(1);
 				}
-			}
-			snprintf(tmp, sizeof tmp, "%s/mnt", ap->root);
-			if(mkdir(tmp, 0777) == -1 && errno != EEXIST){
-				fprintf(stderr, "mkdir(\"%s\"): %s\n", tmp, strerror(errno));
-				exit(1);
-			}
-			if(syscall(SYS_pivot_root, ap->root, tmp) == -1){
-				fprintf(stderr, "pivot_root(\"%s\", \"%s\"): %s\n", ap->root, tmp, strerror(errno));
-				exit(1);
+				if(syscall(SYS_pivot_root, ap->root, mntdir) == -1){
+					fprintf(stderr, "pivot_root(\"%s\", \"%s\"): %s\n", ap->root, mntdir, strerror(errno));
+					exit(1);
+				}
+				free(mntdir);
 			}
 
 			char *x11src = "/mnt/tmp/.X11-unix";
@@ -337,17 +348,35 @@ enterchild(void *arg){
 int
 runcontainer(Args *args, int cloneflags)
 {
-	char *childstack;
-	int stacksize;
-	int pid;
-
-	stacksize = 16384;
-	childstack = malloc(stacksize);
-	pid = clone(
+	size_t stacksize = 16384;
+	char *childstack = mmap(NULL, stacksize, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_STACK, -1, 0);
+	if(childstack == NULL){
+		fprintf(stderr, "error: could not allocate child stack: %s", strerror(errno));
+		exit(1);
+	}
+	int pid = clone(
 		enterchild, stackalign(childstack + stacksize),
 		cloneflags,
 		(void*)args
 	);
 
 	return pid;
+}
+
+void
+cleancontainer(Args *ap)
+{
+	char *workwork = smprintf("%s/work/work", ap->toproot);
+	if(rmdir(workwork) == -1 && errno != EEXIST){
+		fprintf(stderr, "unlink(\"%s\"): %s\n", workwork, strerror(errno));
+		exit(1);
+	}
+	free(workwork);
+
+	char *work = smprintf("%s/work", ap->toproot);
+	if(rmdir(work) == -1 && errno != EEXIST){
+		fprintf(stderr, "unlink(\"%s\"): %s\n", work, strerror(errno));
+		exit(1);
+	}
+	free(work);
 }

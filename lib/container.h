@@ -15,3 +15,4 @@ struct Args {
 
 
 int runcontainer(Args *Args, int cloneflags);
+void cleancontainer(Args *ap);

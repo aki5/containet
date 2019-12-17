@@ -24,11 +24,8 @@ Containode has the following command line options
 -r path/to/root
 	path to pivot into before executing the program
 -t path/to/top
-	if supplied, aufs (or overlayfs) is used to mount this directory over
-	the one given with -r.
--w path/to/work
-	if supplied, overlayfs working directory is set to this one (and
-	overlayfs is used, instead of aufs).
+	the supplied directory is used to store changes to the root filesystem,
+	instead of automatically creating a temporary directory.
 -i identity
 	Identity of the container (needs to be unique within session), also
 	hostname. If not supplied, a random 64-bit number is generated and
@@ -41,12 +38,14 @@ Containode has the following command line options
 	executes with the host IPC namespace instead.
 ```
 
-All the mount name space paramters (-r, -t, -w) can be omitted, in which case
-no changes are made to the mount name space. If no -s flag is supplied,
-no network interface will be created for the container beyond the loopback
-device. The -4 switch can also be omitted, in which case no address will be
-assigned up front (but code in the container can still assign any address it
-wants).
+All the mount name space paramters (-r, -t) can be omitted, in which case
+no changes are made to the mount name space. If -r is supplied but -t is
+omitted, a new directory is created. Its name is just what got passed to -r
+but with the container identity added as a suffix.
+
+If no -s flag is supplied, no network interface will be created for the container.
+The -4 switch can also be omitted, in which case no address will be assigned up
+front (but code in the container can still assign any address it wants).
 
 Regardless of the mount name space configuration, containode will mount the
 following file systems before executing the program
