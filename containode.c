@@ -84,12 +84,8 @@ static char *base62 =
 static char *
 idstr(uint64_t id)
 {
-
-	char *str;
-	int i;
-
-	str = malloc(12);
-	for(i = 10; i >= 0; i--){
+	char *str = malloc(12);
+	for(int i = 10; i >= 0; i--){
 		str[i] = base62[id%62];
 		id /= 62;
 	}
@@ -100,11 +96,9 @@ idstr(uint64_t id)
 static uint64_t
 strid(char *str)
 {
-	uint64_t id;
-	int i, j;
-
-	id = 0;
-	for(i = 0; i < 11; i++){
+	uint64_t id = 0;
+	for(size_t i = 0; i < 11; i++){
+		size_t j;
 		for(j = 0; j < 62; j++){
 			if(base62[j] == str[i])
 				break;
@@ -123,26 +117,15 @@ strid(char *str)
 int
 main(int argc, char *argv[])
 {
-	Args args;
-	char *root;
-	char *toproot;
-	char *topwork;
-	char *ip4addr;
-	char *postname;
-	int opt, pid, status;
-	int ctrlsock;
-	int cloneflags;
-	int Cflag;
+	char *root = NULL;
+	char *toproot = NULL;
+	char *topwork = NULL;
+	char *ip4addr = NULL;
+	char *postname = NULL;
+	int ctrlsock = -1;
+	int Cflag = 0;
 
-	root = NULL;
-	toproot = NULL;
-	topwork = NULL;
-	ip4addr = NULL;
-	postname = NULL;
-	ctrlsock = -1;
-	Cflag = 0;
-
-	cloneflags =
+	int cloneflags =
 		SIGCHLD |	// new process
 		CLONE_NEWNS|	// new mount space
 		CLONE_NEWPID|	// new pid space
@@ -150,6 +133,7 @@ main(int argc, char *argv[])
 		CLONE_NEWIPC|	// new sysvipc name space
 		CLONE_NEWNET;	// new network namespace
 
+	int opt, status;
 	while((opt = getopt(argc, argv, "r:t:w:4:s:i:NIp:a:")) != -1) {
 		switch(opt){
 		case 's':
@@ -237,7 +221,7 @@ main(int argc, char *argv[])
 	// having iptables around at all is a major time suck too, but we can't fix that here.
 	writefile("/sys/kernel/rcu_expedited", "1", 1);
 
-	args = (Args){
+	Args args = (Args){
 		.argc = argc-optind,
 		.argv = argv+optind,
 		.environ = NULL,
@@ -251,7 +235,7 @@ main(int argc, char *argv[])
 		.authtoken = authtoken,
 	};
 
-	pid = runcontainer(&args, cloneflags);
+	int pid = runcontainer(&args, cloneflags);
 	if(pid == -1){
 		fprintf(stderr, "runcontainer: %s\n", strerror(errno));
 		exit(1);
