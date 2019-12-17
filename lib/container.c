@@ -143,6 +143,9 @@ enterchild(void *arg){
 	char ifname[256];
 	int i;
 
+	close(ap->tube[0]); // close parent's end of the pipe
+	fcntl(ap->tube[1], O_CLOEXEC); // ... so caller is unblocked on successful exec
+
 	sethostname(ap->identity, strlen(ap->identity));
 
 	ifconfig("lo", "127.0.0.1/8");
@@ -342,6 +345,7 @@ enterchild(void *arg){
 
 	execve(ap->argv[0], ap->argv, ap->environ);
 	fprintf(stderr, "exec(\"%s\"): %s\n", ap->argv[0], strerror(errno));
+	write(ap->tube[1], "exec", 4); // todo: replace with a slightly more general error signaling system.
 	exit(1);
 }
 
@@ -349,16 +353,44 @@ int
 runcontainer(Args *args, int cloneflags)
 {
 	size_t stacksize = 16384;
-	char *childstack = mmap(NULL, stacksize, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_STACK, -1, 0);
+	char *childstack = malloc(stacksize);
 	if(childstack == NULL){
 		fprintf(stderr, "error: could not allocate child stack: %s", strerror(errno));
 		exit(1);
 	}
+
+	if(pipe(args->tube) == -1){
+		fprintf(stderr, "could not create pipe: %s\n", strerror(errno));
+		exit(1);
+	}
+
 	int pid = clone(
 		enterchild, stackalign(childstack + stacksize),
 		cloneflags,
 		(void*)args
 	);
+
+	close(args->tube[1]); // close the child's end right away
+	if(pid == -1)
+		return -1;
+
+	char *errbuf = malloc(256);
+	ssize_t err = read(args->tube[0], errbuf, 256);
+	close(args->tube[0]); // .. close our end here.. the child has closed by now anyway.
+	if(err != 0){
+		int status;
+		if(waitpid(pid, &status, 0) == -1) {
+			fprintf(stderr, "waitpid: %s\n", strerror(errno));
+		}
+		if(!WIFEXITED(status)){
+			fprintf(stderr, "error: child did not exit normally\n");
+		}
+		fprintf(stderr, "runcontainer error message: %.*s\n", (int)err, errbuf);
+		free(errbuf);
+		return -1;
+	}
+	free(errbuf);
+	free(childstack);
 
 	return pid;
 }

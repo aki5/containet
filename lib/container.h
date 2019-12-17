@@ -11,6 +11,9 @@ struct Args {
 	int ctrlsock; // domain socket to switch
 	char *postname;
 	char *authtoken;
+
+	// private variables..
+	int tube[2];
 };
 
 
